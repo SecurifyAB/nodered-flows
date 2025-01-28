@@ -1,0 +1,804 @@
+[
+    {
+        "id": "60bb5d17c59a8932",
+        "type": "tab",
+        "label": "AIS",
+        "disabled": false,
+        "info": "",
+        "env": []
+    },
+    {
+        "id": "ae63a362944c9a36",
+        "type": "mqtt in",
+        "z": "60bb5d17c59a8932",
+        "name": "",
+        "topic": "ais_pub",
+        "qos": "2",
+        "datatype": "auto-detect",
+        "broker": "3eaed70572868379",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 150,
+        "y": 280,
+        "wires": [
+            [
+                "209f2e6824e7a14c"
+            ]
+        ]
+    },
+    {
+        "id": "209f2e6824e7a14c",
+        "type": "ais-decoder",
+        "z": "60bb5d17c59a8932",
+        "name": "",
+        "x": 330,
+        "y": 280,
+        "wires": [
+            [
+                "f11deb43c31abca1"
+            ]
+        ]
+    },
+    {
+        "id": "13af5ce030a5d3b4",
+        "type": "sqlite",
+        "z": "60bb5d17c59a8932",
+        "mydb": "309c255851ae08e7",
+        "sqlquery": "prepared",
+        "sql": "SELECT COUNT(*) AS count FROM ship_data WHERE senderMmsi = $senderMmsi;",
+        "name": "Query db and count MMSI",
+        "x": 1170,
+        "y": 320,
+        "wires": [
+            [
+                "740426c5a1142d77"
+            ]
+        ]
+    },
+    {
+        "id": "f11deb43c31abca1",
+        "type": "function",
+        "z": "60bb5d17c59a8932",
+        "name": "Split out on msgType == 1",
+        "func": "// Validate the message structure\nif (msg && msg.payload && typeof msg.payload.messageType !== 'undefined') {\n    // Check if \"messageType\" is 1 and route accordingly\n    if (msg.payload.messageType === 1) {\n        // Send to the first output\n        return [msg, null];\n    } else {\n        // Send to the second output\n        return [null, msg];\n    }\n} else {\n    // Invalid message structure, discard or handle it (e.g., log or send to a different output)\n    node.warn(\"Invalid message structure: \" + JSON.stringify(msg));\n    return null; // Discards the message, or you could add a third output for invalid messages\n}",
+        "outputs": 2,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 570,
+        "y": 280,
+        "wires": [
+            [
+                "47910f688c57ae4a"
+            ],
+            [
+                "b6ad288a1d4fe3ca"
+            ]
+        ]
+    },
+    {
+        "id": "17dd3f91d1be5cc3",
+        "type": "tcp out",
+        "z": "60bb5d17c59a8932",
+        "name": "",
+        "host": "corecommand5.lan",
+        "port": "15669",
+        "beserver": "client",
+        "base64": false,
+        "end": false,
+        "tls": "",
+        "x": 1010,
+        "y": 220,
+        "wires": []
+    },
+    {
+        "id": "47910f688c57ae4a",
+        "type": "json",
+        "z": "60bb5d17c59a8932",
+        "name": "",
+        "property": "payload",
+        "action": "",
+        "pretty": false,
+        "x": 790,
+        "y": 220,
+        "wires": [
+            [
+                "17dd3f91d1be5cc3"
+            ]
+        ]
+    },
+    {
+        "id": "bb27ea2cde1b1e7e",
+        "type": "debug",
+        "z": "60bb5d17c59a8932",
+        "name": "debug 2",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "true",
+        "targetType": "full",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 2080,
+        "y": 280,
+        "wires": []
+    },
+    {
+        "id": "efac0f0b1b857e5f",
+        "type": "sqlite",
+        "z": "60bb5d17c59a8932",
+        "mydb": "309c255851ae08e7",
+        "sqlquery": "fixed",
+        "sql": "CREATE TABLE IF NOT EXISTS ship_data (\n    senderMmsi TEXT PRIMARY KEY,\n    name TEXT,\n    shipType INTEGER,\n    destination TEXT,\n    comment TEXT,\n    intent TEXT DEFAULT \"Unknown\"\n\n);",
+        "name": "Create table",
+        "x": 390,
+        "y": 800,
+        "wires": [
+            [
+                "53d45ca808ab0895"
+            ]
+        ]
+    },
+    {
+        "id": "db3e527da6e40625",
+        "type": "inject",
+        "z": "60bb5d17c59a8932",
+        "name": "",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 180,
+        "y": 880,
+        "wires": [
+            [
+                "6033c8e4ed553fa9"
+            ]
+        ]
+    },
+    {
+        "id": "6033c8e4ed553fa9",
+        "type": "sqlite",
+        "z": "60bb5d17c59a8932",
+        "mydb": "309c255851ae08e7",
+        "sqlquery": "fixed",
+        "sql": "SELECT * FROM ship_data;",
+        "name": "Read ship table",
+        "x": 400,
+        "y": 880,
+        "wires": [
+            [
+                "24cfde7194e41c39"
+            ]
+        ]
+    },
+    {
+        "id": "eb9d265da0de028c",
+        "type": "inject",
+        "z": "60bb5d17c59a8932",
+        "name": "",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 180,
+        "y": 800,
+        "wires": [
+            [
+                "efac0f0b1b857e5f"
+            ]
+        ]
+    },
+    {
+        "id": "b6ad288a1d4fe3ca",
+        "type": "function",
+        "z": "60bb5d17c59a8932",
+        "name": "Prepare check id MMSI exists",
+        "func": "// Extract senderMmsi and other relevant data\nconst senderMmsi = msg.payload.senderMmsi;\nconst name = msg.payload.name || null;\nconst shipType = msg.payload.shipType || null;\nconst destination = msg.payload.destination || null;\n\nmsg.params = { $senderMmsi: senderMmsi }; // Use named parameters\n\n// Pass relevant data for potential insert later\nmsg.newRecord = { senderMmsi, name, shipType, destination };\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 870,
+        "y": 320,
+        "wires": [
+            [
+                "13af5ce030a5d3b4"
+            ]
+        ]
+    },
+    {
+        "id": "740426c5a1142d77",
+        "type": "switch",
+        "z": "60bb5d17c59a8932",
+        "name": "",
+        "property": "msg.payload[0].count",
+        "propertyType": "msg",
+        "rules": [
+            {
+                "t": "eq",
+                "v": "0",
+                "vt": "num"
+            },
+            {
+                "t": "gt",
+                "v": "0",
+                "vt": "num"
+            }
+        ],
+        "checkall": "true",
+        "repair": false,
+        "outputs": 2,
+        "x": 1390,
+        "y": 320,
+        "wires": [
+            [
+                "c772beb3f601baac"
+            ],
+            [
+                "443c2d31072ef579"
+            ]
+        ]
+    },
+    {
+        "id": "c772beb3f601baac",
+        "type": "function",
+        "z": "60bb5d17c59a8932",
+        "name": "Prepare INSERT",
+        "func": "// Extract data from msg.newRecord\nconst { senderMmsi, name, shipType, destination } = msg.newRecord;\n\n// Set the parameters in msg.payload\nmsg.params = {\n    $senderMmsi: senderMmsi,\n    $name: name,\n    $shipType: shipType,\n    $destination: destination\n};\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1610,
+        "y": 280,
+        "wires": [
+            [
+                "f6e70672ae887364"
+            ]
+        ]
+    },
+    {
+        "id": "f6e70672ae887364",
+        "type": "sqlite",
+        "z": "60bb5d17c59a8932",
+        "mydb": "309c255851ae08e7",
+        "sqlquery": "prepared",
+        "sql": "INSERT INTO ship_data (senderMmsi, name, shipType, destination) VALUES ($senderMmsi, $name, $shipType, $destination);",
+        "name": "INSERT MMSI",
+        "x": 1860,
+        "y": 280,
+        "wires": [
+            [
+                "bb27ea2cde1b1e7e"
+            ]
+        ]
+    },
+    {
+        "id": "8f91ded42c6dc51a",
+        "type": "sqlite",
+        "z": "60bb5d17c59a8932",
+        "mydb": "309c255851ae08e7",
+        "sqlquery": "fixed",
+        "sql": "DELETE FROM ship_data;",
+        "name": "Flush the db",
+        "x": 390,
+        "y": 740,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "7c1c72ce38ca61c9",
+        "type": "inject",
+        "z": "60bb5d17c59a8932",
+        "name": "",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 180,
+        "y": 740,
+        "wires": [
+            [
+                "8f91ded42c6dc51a"
+            ]
+        ]
+    },
+    {
+        "id": "24cfde7194e41c39",
+        "type": "debug",
+        "z": "60bb5d17c59a8932",
+        "name": "debug 3",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 600,
+        "y": 880,
+        "wires": []
+    },
+    {
+        "id": "5026f397ac6fc16a",
+        "type": "sqlite",
+        "z": "60bb5d17c59a8932",
+        "mydb": "309c255851ae08e7",
+        "sqlquery": "fixed",
+        "sql": "SELECT * FROM ship_data WHERE senderMmsi = '236111925';",
+        "name": "Fetch specific MMSI",
+        "x": 420,
+        "y": 980,
+        "wires": [
+            [
+                "de30836d1bef2ef1"
+            ]
+        ]
+    },
+    {
+        "id": "bd8b031eb912022b",
+        "type": "inject",
+        "z": "60bb5d17c59a8932",
+        "name": "",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 180,
+        "y": 980,
+        "wires": [
+            [
+                "5026f397ac6fc16a"
+            ]
+        ]
+    },
+    {
+        "id": "de30836d1bef2ef1",
+        "type": "debug",
+        "z": "60bb5d17c59a8932",
+        "name": "debug 5",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 620,
+        "y": 980,
+        "wires": []
+    },
+    {
+        "id": "443c2d31072ef579",
+        "type": "function",
+        "z": "60bb5d17c59a8932",
+        "name": "Fetch all fields for existing MMSI",
+        "func": "// Extract senderMmsi\nconst senderMmsi = msg.newRecord.senderMmsi;\n\nmsg.params = { $senderMmsi: senderMmsi }; // Pass the senderMmsi parameter\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1630,
+        "y": 360,
+        "wires": [
+            [
+                "edc85dcc34cebd9d"
+            ]
+        ]
+    },
+    {
+        "id": "edc85dcc34cebd9d",
+        "type": "sqlite",
+        "z": "60bb5d17c59a8932",
+        "mydb": "309c255851ae08e7",
+        "sqlquery": "prepared",
+        "sql": "SELECT * FROM ship_data WHERE senderMmsi = $senderMmsi;",
+        "name": "",
+        "x": 1880,
+        "y": 360,
+        "wires": [
+            [
+                "1541a76dc252979d"
+            ]
+        ]
+    },
+    {
+        "id": "1541a76dc252979d",
+        "type": "function",
+        "z": "60bb5d17c59a8932",
+        "name": "Prepare Update",
+        "func": "// Extract the new record and database record\nconst { senderMmsi, name, shipType, destination } = msg.newRecord;\n\n// Prepare the parameters\nmsg.params = {\n    $senderMmsi: senderMmsi,\n    $newName: name || null,          // Use new name if provided, else NULL\n    $newShipType: shipType || null,  // Use new shipType if provided, else NULL\n    $newDestination: destination || null // Use new destination if provided, else NULL\n};\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 2080,
+        "y": 360,
+        "wires": [
+            [
+                "b923874e34cfcfd2"
+            ]
+        ]
+    },
+    {
+        "id": "b923874e34cfcfd2",
+        "type": "sqlite",
+        "z": "60bb5d17c59a8932",
+        "mydb": "309c255851ae08e7",
+        "sqlquery": "prepared",
+        "sql": "UPDATE ship_data\nSET\n    name = COALESCE($newName, name),\n    shipType = COALESCE($newShipType, shipType),\n    destination = COALESCE($newDestination, destination)\nWHERE senderMmsi = $senderMmsi;",
+        "name": "",
+        "x": 2300,
+        "y": 360,
+        "wires": [
+            [
+                "884205f3137da6d3"
+            ]
+        ]
+    },
+    {
+        "id": "884205f3137da6d3",
+        "type": "debug",
+        "z": "60bb5d17c59a8932",
+        "name": "debug 4",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 2500,
+        "y": 360,
+        "wires": []
+    },
+    {
+        "id": "53d45ca808ab0895",
+        "type": "debug",
+        "z": "60bb5d17c59a8932",
+        "name": "debug 6",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 580,
+        "y": 800,
+        "wires": []
+    },
+    {
+        "id": "a472f29eb90fbeba",
+        "type": "sqlite",
+        "z": "60bb5d17c59a8932",
+        "mydb": "309c255851ae08e7",
+        "sqlquery": "msg.topic",
+        "sql": "",
+        "name": "Fetch Updated Data",
+        "x": 660,
+        "y": 480,
+        "wires": [
+            [
+                "7f35c6787233da51"
+            ]
+        ]
+    },
+    {
+        "id": "5cb449055cec5f67",
+        "type": "function",
+        "z": "60bb5d17c59a8932",
+        "name": "Prepare Fetch Data",
+        "func": "// Set the SQL query to fetch data from the table\nmsg.topic = \"SELECT * FROM ship_data;\";\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 390,
+        "y": 480,
+        "wires": [
+            [
+                "a472f29eb90fbeba"
+            ]
+        ]
+    },
+    {
+        "id": "550de8630484177e",
+        "type": "ui_ui_control",
+        "z": "60bb5d17c59a8932",
+        "name": "",
+        "events": "all",
+        "x": 160,
+        "y": 480,
+        "wires": [
+            [
+                "5cb449055cec5f67"
+            ]
+        ]
+    },
+    {
+        "id": "393179fde969e98e",
+        "type": "ui-template",
+        "z": "60bb5d17c59a8932",
+        "group": "17602f6462dbfe89",
+        "page": "",
+        "ui": "",
+        "name": "Data List",
+        "order": 1,
+        "width": "0",
+        "height": "0",
+        "head": "",
+        "format": "<template>\n    <!-- Provide an input text box to search the content -->\n    <v-text-field v-model=\"search\" label=\"Search\" prepend-inner-icon=\"mdi-magnify\" single-line variant=\"outlined\"\n        hide-details></v-text-field>\n    <v-data-table v-model:search=\"search\" :items=\"msg?.payload\" :headers=\"msg?.headers\">\n\n      <template v-slot:item.intent=\"{ item }\">\n        <v-combobox v-model=\"item.intent\" :items=\"['Unknown', 'Friendly', 'Hostile', 'Neutral' ]\" density=\"compact\" variant=\"outlined\"></v-combobox>\n      </template>\n\n      <template v-slot:item.comment=\"{ item }\">\n        <v-text-field v-model=\"item.comment\" density=\"compact\" variant=\"outlined\" type=\"text\"></v-text-field>\n      </template>\n\n      <template v-slot:item.edit=\"{ item }\">\n        <v-btn prepend-icon=\"mdi-content-save\" variant=\"tonal\" @click=\"send({topic: 'save', payload: item})\">\n          Save changes\n        </v-btn>\n      </template>\n\n    </v-data-table>\n</template>\n\n<script>\n  export default {\n    data () {\n      return {\n        search: ''\n      }\n    },\n    methods: {\n        // add a function to determine the color of the progress bar given the row's item\n\n\n\n    }\n  }\n</script>",
+        "storeOutMessages": true,
+        "passthru": true,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "",
+        "x": 1100,
+        "y": 480,
+        "wires": [
+            [
+                "e493465b8fadbb2b"
+            ]
+        ]
+    },
+    {
+        "id": "7f35c6787233da51",
+        "type": "change",
+        "z": "60bb5d17c59a8932",
+        "name": "Add Headers",
+        "rules": [
+            {
+                "t": "set",
+                "p": "headers",
+                "pt": "msg",
+                "to": "[{\"title\":\"Ship's MMSI\",\"value\":\"senderMmsi\",\"sortable\":true},{\"title\":\"Ship's name\",\"value\":\"name\",\"sortable\":true},{\"title\":\"Ship's type\",\"value\":\"shipType\",\"sortable\":true},{\"title\":\"Destination\",\"value\":\"destination\",\"sortable\":true},{\"title\":\"Intent\",\"value\":\"intent\",\"sortable\":false},{\"title\":\"Comment\",\"value\":\"comment\",\"sortable\":true,\"width\":\"300px\"},{\"title\":\"Actions\",\"value\":\"edit\"}]",
+                "tot": "json"
+            },
+            {
+                "t": "set",
+                "p": "topic",
+                "pt": "msg",
+                "to": "null",
+                "tot": "str"
+            }
+        ],
+        "action": "",
+        "property": "",
+        "from": "",
+        "to": "",
+        "reg": false,
+        "x": 910,
+        "y": 480,
+        "wires": [
+            [
+                "393179fde969e98e"
+            ]
+        ]
+    },
+    {
+        "id": "e493465b8fadbb2b",
+        "type": "function",
+        "z": "60bb5d17c59a8932",
+        "name": "Prepare Update",
+        "func": "if (msg.topic !== \"save\") {\n  return;\n}\n\n// Extract the new record and database record\nconst { senderMmsi, intent, comment } = msg.payload;\n\n// Prepare the parameters\nmsg.params = {\n    $senderMmsi: senderMmsi,\n    $intent: intent || null,          // Use new name if provided, else NULL\n    $comment: comment || null,  // Use new shipType if provided, else NULL\n};\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1320,
+        "y": 480,
+        "wires": [
+            [
+                "f99ffa04662c705e"
+            ]
+        ]
+    },
+    {
+        "id": "f99ffa04662c705e",
+        "type": "sqlite",
+        "z": "60bb5d17c59a8932",
+        "mydb": "309c255851ae08e7",
+        "sqlquery": "prepared",
+        "sql": "UPDATE ship_data\nSET\n    comment = COALESCE($comment, comment),\n    intent = COALESCE($intent, intent)\nWHERE senderMmsi = $senderMmsi;",
+        "name": "",
+        "x": 1540,
+        "y": 480,
+        "wires": [
+            [
+                "5cb449055cec5f67"
+            ]
+        ]
+    },
+    {
+        "id": "3eaed70572868379",
+        "type": "mqtt-broker",
+        "name": "MQTT-corecommand5",
+        "broker": "corecommand5.lan",
+        "port": "1883",
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": "4",
+        "keepalive": "60",
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "309c255851ae08e7",
+        "type": "sqlitedb",
+        "db": "/data/ships.db",
+        "mode": "RWC"
+    },
+    {
+        "id": "17602f6462dbfe89",
+        "type": "ui-group",
+        "name": "AIS",
+        "page": "80ebb506b0384a92",
+        "width": 6,
+        "height": 1,
+        "order": 1,
+        "showTitle": true,
+        "className": "",
+        "visible": "true",
+        "disabled": "false",
+        "groupType": "default"
+    },
+    {
+        "id": "80ebb506b0384a92",
+        "type": "ui-page",
+        "name": "CoreCommand - add-on",
+        "ui": "aa4e8ca50a80bb34",
+        "path": "/ais",
+        "icon": "ship",
+        "layout": "grid",
+        "theme": "0d92c765bfad87e6",
+        "breakpoints": [
+            {
+                "name": "Default",
+                "px": "0",
+                "cols": "3"
+            },
+            {
+                "name": "Tablet",
+                "px": "576",
+                "cols": "6"
+            },
+            {
+                "name": "Small Desktop",
+                "px": "768",
+                "cols": "9"
+            },
+            {
+                "name": "Desktop",
+                "px": "1024",
+                "cols": "12"
+            }
+        ],
+        "order": 1,
+        "className": "",
+        "visible": "true",
+        "disabled": "false"
+    },
+    {
+        "id": "aa4e8ca50a80bb34",
+        "type": "ui-base",
+        "name": "My Dashboard",
+        "path": "/dashboard",
+        "appIcon": "",
+        "includeClientData": true,
+        "acceptsClientConfig": [
+            "ui-notification",
+            "ui-control"
+        ],
+        "showPathInSidebar": false,
+        "headerContent": "page",
+        "navigationStyle": "default",
+        "titleBarStyle": "default",
+        "showReconnectNotification": true,
+        "notificationDisplayTime": 1,
+        "showDisconnectNotification": true
+    },
+    {
+        "id": "0d92c765bfad87e6",
+        "type": "ui-theme",
+        "name": "Basic Blue Theme",
+        "colors": {
+            "surface": "#4d58ff",
+            "primary": "#0094ce",
+            "bgPage": "#eeeeee",
+            "groupBg": "#ffffff",
+            "groupOutline": "#cccccc"
+        },
+        "sizes": {
+            "pagePadding": "12px",
+            "groupGap": "12px",
+            "groupBorderRadius": "4px",
+            "widgetGap": "12px"
+        }
+    }
+]
