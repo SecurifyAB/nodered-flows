@@ -568,20 +568,6 @@
         ]
     },
     {
-        "id": "550de8630484177e",
-        "type": "ui_ui_control",
-        "z": "60bb5d17c59a8932",
-        "name": "",
-        "events": "all",
-        "x": 160,
-        "y": 480,
-        "wires": [
-            [
-                "5cb449055cec5f67"
-            ]
-        ]
-    },
-    {
         "id": "393179fde969e98e",
         "type": "ui-template",
         "z": "60bb5d17c59a8932",
@@ -678,6 +664,38 @@
         ]
     },
     {
+        "id": "893b92c4f79bbdf4",
+        "type": "debug",
+        "z": "60bb5d17c59a8932",
+        "name": "debug 7",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 340,
+        "y": 400,
+        "wires": []
+    },
+    {
+        "id": "8c40f1499c403ca4",
+        "type": "ui-control",
+        "z": "60bb5d17c59a8932",
+        "name": "",
+        "ui": "aa4e8ca50a80bb34",
+        "events": "all",
+        "x": 140,
+        "y": 480,
+        "wires": [
+            [
+                "893b92c4f79bbdf4",
+                "5cb449055cec5f67"
+            ]
+        ]
+    },
+    {
         "id": "3eaed70572868379",
         "type": "mqtt-broker",
         "name": "MQTT-corecommand5",
@@ -729,6 +747,25 @@
         "groupType": "default"
     },
     {
+        "id": "aa4e8ca50a80bb34",
+        "type": "ui-base",
+        "name": "My Dashboard",
+        "path": "/dashboard",
+        "appIcon": "",
+        "includeClientData": true,
+        "acceptsClientConfig": [
+            "ui-notification",
+            "ui-control"
+        ],
+        "showPathInSidebar": false,
+        "headerContent": "page",
+        "navigationStyle": "default",
+        "titleBarStyle": "default",
+        "showReconnectNotification": true,
+        "notificationDisplayTime": 1,
+        "showDisconnectNotification": true
+    },
+    {
         "id": "80ebb506b0384a92",
         "type": "ui-page",
         "name": "CoreCommand - add-on",
@@ -763,25 +800,6 @@
         "className": "",
         "visible": "true",
         "disabled": "false"
-    },
-    {
-        "id": "aa4e8ca50a80bb34",
-        "type": "ui-base",
-        "name": "My Dashboard",
-        "path": "/dashboard",
-        "appIcon": "",
-        "includeClientData": true,
-        "acceptsClientConfig": [
-            "ui-notification",
-            "ui-control"
-        ],
-        "showPathInSidebar": false,
-        "headerContent": "page",
-        "navigationStyle": "default",
-        "titleBarStyle": "default",
-        "showReconnectNotification": true,
-        "notificationDisplayTime": 1,
-        "showDisconnectNotification": true
     },
     {
         "id": "0d92c765bfad87e6",
