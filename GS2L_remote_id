@@ -1,0 +1,78 @@
+[
+    {
+        "id": "5f2b58345a6aa221",
+        "type": "tab",
+        "label": "RemoteID",
+        "disabled": true,
+        "info": "",
+        "env": []
+    },
+    {
+        "id": "1e0ac317232d2101",
+        "type": "mqtt in",
+        "z": "5f2b58345a6aa221",
+        "name": "",
+        "topic": "SECURIFY/gs2l0071/TT_RW",
+        "qos": "2",
+        "datatype": "auto-detect",
+        "broker": "3eaed70572868379",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 160,
+        "y": 100,
+        "wires": [
+            [
+                "28105e54b9e9fcd5"
+            ]
+        ]
+    },
+    {
+        "id": "28105e54b9e9fcd5",
+        "type": "debug",
+        "z": "5f2b58345a6aa221",
+        "name": "debug 1",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 420,
+        "y": 100,
+        "wires": []
+    },
+    {
+        "id": "3eaed70572868379",
+        "type": "mqtt-broker",
+        "name": "MQTT-corecommand5",
+        "broker": "corecommand5.lan",
+        "port": "1883",
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": "4",
+        "keepalive": "60",
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    }
+]
