@@ -1,0 +1,167 @@
+[
+    {
+        "id": "2d0c9298dd8e04ab",
+        "type": "tab",
+        "label": "ADSB-B",
+        "disabled": true,
+        "info": "",
+        "env": []
+    },
+    {
+        "id": "1e763c4c4805b57c",
+        "type": "mqtt in",
+        "z": "2d0c9298dd8e04ab",
+        "name": "",
+        "topic": "SECURIFY/gs2l0071/TT_SF",
+        "qos": "2",
+        "datatype": "auto-detect",
+        "broker": "3eaed70572868379",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 200,
+        "y": 80,
+        "wires": [
+            [
+                "4d4231be67f9e0a7"
+            ]
+        ]
+    },
+    {
+        "id": "8e0f8cd6db4db0d7",
+        "type": "function",
+        "z": "2d0c9298dd8e04ab",
+        "name": "function 1",
+        "func": "// Check if the incoming message has an `adsb` array\nif (msg.payload && Array.isArray(msg.payload.adsb)) {\n    // Filter the `adsb` array for items containing `lat`, `lon`, `icao`, and `baroAlt`\n    const filteredAdsB = msg.payload.adsb.filter(item =>\n        item.hasOwnProperty('lat') &&\n        item.hasOwnProperty('lon') &&\n        item.hasOwnProperty('icao') &&\n        item.hasOwnProperty('baroAlt')\n    );\n\n    // If the filtered array is not empty, update the payload\n    if (filteredAdsB.length > 0) {\n        msg.payload.adsb = filteredAdsB;\n        return msg; // Return the modified message\n    }\n}\n\n// If no valid data is found, stop the message flow\nreturn null;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 720,
+        "y": 80,
+        "wires": [
+            [
+                "025fcaf1e7ada19c",
+                "ab96d3d302a123a2"
+            ]
+        ]
+    },
+    {
+        "id": "025fcaf1e7ada19c",
+        "type": "debug",
+        "z": "2d0c9298dd8e04ab",
+        "name": "debug 8",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "true",
+        "targetType": "full",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 940,
+        "y": 120,
+        "wires": []
+    },
+    {
+        "id": "4d4231be67f9e0a7",
+        "type": "split",
+        "z": "2d0c9298dd8e04ab",
+        "name": "",
+        "splt": "\\n",
+        "spltType": "str",
+        "arraySplt": 1,
+        "arraySpltType": "len",
+        "stream": false,
+        "addname": "",
+        "property": "payload",
+        "x": 430,
+        "y": 80,
+        "wires": [
+            [
+                "2a87ab57f0f9f17d"
+            ]
+        ]
+    },
+    {
+        "id": "2a87ab57f0f9f17d",
+        "type": "json",
+        "z": "2d0c9298dd8e04ab",
+        "name": "",
+        "property": "payload",
+        "action": "",
+        "pretty": false,
+        "x": 570,
+        "y": 80,
+        "wires": [
+            [
+                "8e0f8cd6db4db0d7"
+            ]
+        ]
+    },
+    {
+        "id": "0c48a38c02880608",
+        "type": "tcp out",
+        "z": "2d0c9298dd8e04ab",
+        "name": "",
+        "host": "corecommand5.lan",
+        "port": "15670",
+        "beserver": "client",
+        "base64": false,
+        "end": false,
+        "tls": "",
+        "x": 1270,
+        "y": 80,
+        "wires": []
+    },
+    {
+        "id": "ab96d3d302a123a2",
+        "type": "json",
+        "z": "2d0c9298dd8e04ab",
+        "name": "",
+        "property": "payload",
+        "action": "",
+        "pretty": false,
+        "x": 930,
+        "y": 80,
+        "wires": [
+            [
+                "0c48a38c02880608"
+            ]
+        ]
+    },
+    {
+        "id": "3eaed70572868379",
+        "type": "mqtt-broker",
+        "name": "MQTT-corecommand5",
+        "broker": "corecommand5.lan",
+        "port": "1883",
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": "4",
+        "keepalive": "60",
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    }
+]
