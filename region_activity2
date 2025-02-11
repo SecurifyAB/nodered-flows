@@ -1,0 +1,430 @@
+[
+    {
+        "id": "776cada2606cca5d",
+        "type": "tab",
+        "label": "Flow 1",
+        "disabled": false,
+        "info": ""
+    },
+    {
+        "id": "e246e6fbdc967a6f",
+        "type": "function",
+        "z": "776cada2606cca5d",
+        "name": "Add track to activeTracks",
+        "func": "// Retrieve the global 'activeTracks' object, or initialize it if it doesn't exist\nlet activeTracks = global.get(\"activeTracks\") || {};\n\n// Extract values from the incoming message payload\nlet trackid = msg.payload.trackid;\nlet region = msg.payload.region;\nlet type = msg.payload.type || \"unknown\"; // Default to \"unknown\" if missing\nlet source = msg.payload.source || \"unknown\"; // Default to \"unknown\" if missing\n\n// Get the current timestamp\nlet currentTimestamp = Math.floor(Date.now() / 1000); // Unix timestamp in seconds\n\n// Ensure the 'region' key exists in 'activeTracks'\nif (!activeTracks[region]) {\n    activeTracks[region] = {}; // Initialize region if it doesn't exist\n}\n\n// Update or create entry for the 'trackid' inside the correct region\nactiveTracks[region][trackid] = {\n    \"ts\": currentTimestamp, // Store timestamp separately\n    \"type\": type,           // Store type\n    \"source\": source        // Store source\n};\n\n// Update the global object with the modified 'activeTracks'\nglobal.set(\"activeTracks\", activeTracks);\n\n// Output the updated object to the next node\nmsg.payload = activeTracks;\nreturn msg;\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 670,
+        "y": 80,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "669d1ab9c35fdd6f",
+        "type": "http in",
+        "z": "776cada2606cca5d",
+        "name": "",
+        "url": "/analytic",
+        "method": "post",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 90,
+        "y": 560,
+        "wires": [
+            [
+                "bbed1cd94f6c2c45",
+                "acc54d57ad722833",
+                "f6409deb7971229e"
+            ]
+        ]
+    },
+    {
+        "id": "bbed1cd94f6c2c45",
+        "type": "http response",
+        "z": "776cada2606cca5d",
+        "name": "",
+        "statusCode": "200",
+        "headers": {},
+        "x": 380,
+        "y": 520,
+        "wires": []
+    },
+    {
+        "id": "acc54d57ad722833",
+        "type": "function",
+        "z": "776cada2606cca5d",
+        "name": "Check if regon is active",
+        "func": "// Retrieve the global 'activeTracks' object, or initialize it if it doesn't exist\nlet activeTracks = global.get(\"activeTracks\") || {};\n\n// Extract 'display_name' from the incoming message payload\nlet displayName = msg.payload.display_name;\n\n// Create an array to store outgoing messages\nlet messages = [];\n\n// Iterate through each track in 'activeTracks'\nfor (let trackid in activeTracks) {\n    if (activeTracks.hasOwnProperty(trackid)) {\n        let trackData = activeTracks[trackid];\n\n        // Ensure 'regions' is an array before iterating\n        if (Array.isArray(trackData.regions) && trackData.regions.includes(displayName)) {\n            // Create a new message with source as payload\n            let newMsg = { payload: trackData.source };\n\n            // Add the message to the array\n            messages.push(newMsg);\n        }\n    }\n}\n\n// Return multiple messages\nreturn [messages];\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 430,
+        "y": 620,
+        "wires": [
+            [
+                "2c1123dd05eff10d"
+            ]
+        ]
+    },
+    {
+        "id": "94d212ddac9a17fa",
+        "type": "inject",
+        "z": "776cada2606cca5d",
+        "name": "",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 100,
+        "y": 340,
+        "wires": [
+            [
+                "82599410919688d3"
+            ]
+        ]
+    },
+    {
+        "id": "82599410919688d3",
+        "type": "function",
+        "z": "776cada2606cca5d",
+        "name": "Read tracks",
+        "func": "let activeRegion = global.get('activeTracks') || [];\n\nmsg.payload = activeRegion;\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 350,
+        "y": 340,
+        "wires": [
+            [
+                "8fdb01a7224fc3bf"
+            ]
+        ]
+    },
+    {
+        "id": "8fdb01a7224fc3bf",
+        "type": "debug",
+        "z": "776cada2606cca5d",
+        "name": "debug 9",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 680,
+        "y": 340,
+        "wires": []
+    },
+    {
+        "id": "a57dfe18acdee313",
+        "type": "catch",
+        "z": "776cada2606cca5d",
+        "name": "",
+        "scope": null,
+        "uncaught": false,
+        "x": 80,
+        "y": 720,
+        "wires": [
+            [
+                "7812c5b7d9bf6593"
+            ]
+        ]
+    },
+    {
+        "id": "7812c5b7d9bf6593",
+        "type": "debug",
+        "z": "776cada2606cca5d",
+        "name": "debug 11",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 340,
+        "y": 720,
+        "wires": []
+    },
+    {
+        "id": "419676939fe71b02",
+        "type": "inject",
+        "z": "776cada2606cca5d",
+        "name": "",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "2",
+        "crontab": "",
+        "once": true,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 110,
+        "y": 220,
+        "wires": [
+            [
+                "cbaaea453f33d8a8"
+            ]
+        ]
+    },
+    {
+        "id": "2c1123dd05eff10d",
+        "type": "http request",
+        "z": "776cada2606cca5d",
+        "name": "Push to ACS",
+        "method": "GET",
+        "ret": "txt",
+        "paytoqs": "ignore",
+        "url": "https://192.168.1.211:29204/Acs/Api/TriggerFacade/ActivateDeactivateTrigger?{\"triggerName\":\"CoreCommand\",\"deactivateAfterSeconds\":\"5\"}",
+        "tls": "eda33190f0680082",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "basic",
+        "senderr": false,
+        "headers": [],
+        "x": 750,
+        "y": 620,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "f6409deb7971229e",
+        "type": "debug",
+        "z": "776cada2606cca5d",
+        "name": "debug 12",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 660,
+        "y": 560,
+        "wires": []
+    },
+    {
+        "id": "db2467868b72c156",
+        "type": "function",
+        "z": "776cada2606cca5d",
+        "name": "Delete all tracks",
+        "func": "let activeTracks = global.get('activeTracks') || [];\nglobal.set('activeTracks', null);\nreturn msg;\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 360,
+        "y": 420,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "880c1a11fc159f71",
+        "type": "inject",
+        "z": "776cada2606cca5d",
+        "name": "",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 100,
+        "y": 420,
+        "wires": [
+            [
+                "db2467868b72c156"
+            ]
+        ]
+    },
+    {
+        "id": "32634fae6b0fb96b",
+        "type": "tcp in",
+        "z": "776cada2606cca5d",
+        "name": "",
+        "server": "server",
+        "host": "",
+        "port": "18590",
+        "datamode": "single",
+        "datatype": "utf8",
+        "newline": "",
+        "topic": "",
+        "trim": false,
+        "base64": false,
+        "tls": "",
+        "x": 80,
+        "y": 80,
+        "wires": [
+            [
+                "bd35ed1272e57273"
+            ]
+        ]
+    },
+    {
+        "id": "1b32b84cfcaf6629",
+        "type": "function",
+        "z": "776cada2606cca5d",
+        "name": "Downsampling",
+        "func": "var lastTimes = context.get('lastTimes') || {};  // Store last update times per track\nvar lastRegions = context.get('lastRegions') || {}; // Store last known regions per track\nvar interval = 1000; // 1 second interval\n\n// Extract track ID and region from incoming message\nvar trackid = msg.payload.trackid;\nvar region = msg.payload.region;\n\nif (!trackid || !region) {\n    return null; // Ignore messages without track ID or region\n}\n\nvar now = Date.now();\n\n// Ensure last known regions exist for the track\nif (!lastRegions[trackid]) {\n    lastRegions[trackid] = new Set(); // Store regions in a Set for easy checking\n}\n\n// Check if the region is new (not in the last recorded regions)\nvar isNewRegion = !lastRegions[trackid].has(region);\n\n// Check if the time threshold has passed\nvar isTimeThresholdPassed = !lastTimes[trackid] || now - lastTimes[trackid] >= interval;\n\n// Update the timestamp and region list if needed\nif (isNewRegion || isTimeThresholdPassed) {\n    lastTimes[trackid] = now;\n    lastRegions[trackid].add(region); // Add the new region\n\n    context.set('lastTimes', lastTimes);\n    context.set('lastRegions', lastRegions);\n\n    return msg; // Send update\n}\n\nreturn null; // Drop excess updates\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 420,
+        "y": 80,
+        "wires": [
+            [
+                "e246e6fbdc967a6f"
+            ]
+        ]
+    },
+    {
+        "id": "cbaaea453f33d8a8",
+        "type": "function",
+        "z": "776cada2606cca5d",
+        "name": "Remove old tracks",
+        "func": "// Retrieve the global 'activeTracks' object, or initialize it if it doesn't exist\nlet activeTracks = global.get(\"activeTracks\") || {};\n\n// Get the current timestamp\nlet currentTimestamp = Math.floor(Date.now() / 1000); // Unix timestamp in seconds\n\n// Define the time threshold (e.g., 5 seconds)\nconst timeThreshold = 5;\n\n// Iterate through each region\nfor (let region in activeTracks) {\n    if (activeTracks.hasOwnProperty(region)) {\n        // Iterate through each track in the region\n        for (let trackid in activeTracks[region]) {\n            if (activeTracks[region].hasOwnProperty(trackid)) {\n                // Check if the timestamp ('ts' key) is older than the threshold\n                if (currentTimestamp - activeTracks[region][trackid].ts > timeThreshold) {\n                    // Remove the expired track\n                    delete activeTracks[region][trackid];\n                }\n            }\n        }\n\n        // If a region has no more active tracks, remove the region itself\n        if (Object.keys(activeTracks[region]).length === 0) {\n            delete activeTracks[region];\n        }\n    }\n}\n\n// Update the global object with the modified 'activeTracks'\nglobal.set(\"activeTracks\", activeTracks);\n\n// Output the updated object to the next node\nmsg.payload = activeTracks;\nreturn msg;\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 310,
+        "y": 220,
+        "wires": [
+            [
+                "eb1717857ade44ba"
+            ]
+        ]
+    },
+    {
+        "id": "bd35ed1272e57273",
+        "type": "json",
+        "z": "776cada2606cca5d",
+        "name": "",
+        "property": "payload",
+        "action": "",
+        "pretty": false,
+        "x": 230,
+        "y": 80,
+        "wires": [
+            [
+                "1b32b84cfcaf6629"
+            ]
+        ]
+    },
+    {
+        "id": "eb1717857ade44ba",
+        "type": "function",
+        "z": "776cada2606cca5d",
+        "name": "Check track count per camera to decide GT on/off",
+        "func": "// Retrieve the global 'activeTracks' object\nlet activeTracks = global.get(\"activeTracks\") || {};\n\n// Retrieve previous track counts per camera\nlet previousCounts = global.get(\"cameraTrackCounts\") || {};\n\n// Define cameras and their corresponding regions\nconst cameras = {\n    \"F3B1004\": [\"F3B1004_inre\", \"F3B1004_yttre\"],\n    \"F3B1005\": [\"F3B1005_inre\", \"F3B1005_yttre\"]\n};\n\n// Initialize track counts per camera\nlet currentCounts = {};\nfor (let camera in cameras) {\n    currentCounts[camera] = 0;\n}\n\n// Count active tracks for each camera\nfor (let region in activeTracks) {\n    if (activeTracks.hasOwnProperty(region)) {\n        for (let camera in cameras) {\n            if (cameras[camera].includes(region)) {\n                currentCounts[camera] += Object.keys(activeTracks[region]).length;\n            }\n        }\n    }\n}\n\n// Create an array to store messages for the next node\nlet messages = [];\n\n// Check for transitions and create messages\nfor (let camera in currentCounts) {\n    let previousCount = previousCounts[camera] || 0;\n    let currentCount = currentCounts[camera];\n\n    if (previousCount === 0 && currentCount > 0) {\n        // Transition from 0 to more: Send \"activate\" message\n        messages.push({\n            payload: {\n                camera: camera,\n                status: \"activate_gt\"\n            }\n        });\n    } \n    else if (previousCount > 0 && currentCount === 0) {\n        // Transition from more to 0: Send \"deactivate\" message\n        messages.push({\n            payload: {\n                camera: camera,\n                status: \"deactivate_gt\"\n            }\n        });\n    }\n}\n\n// Save the new counts in global memory for next check\nglobal.set(\"cameraTrackCounts\", currentCounts);\n\n// Return multiple messages to be processed individually\nreturn [messages];\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 650,
+        "y": 220,
+        "wires": [
+            [
+                "24336f8e52e2268b"
+            ]
+        ]
+    },
+    {
+        "id": "24336f8e52e2268b",
+        "type": "switch",
+        "z": "776cada2606cca5d",
+        "name": "",
+        "property": "payload.status",
+        "propertyType": "msg",
+        "rules": [
+            {
+                "t": "eq",
+                "v": "activate_gt",
+                "vt": "str"
+            },
+            {
+                "t": "eq",
+                "v": "deactivate_gt",
+                "vt": "str"
+            }
+        ],
+        "checkall": "true",
+        "repair": false,
+        "outputs": 2,
+        "x": 930,
+        "y": 220,
+        "wires": [
+            [],
+            []
+        ]
+    },
+    {
+        "id": "eda33190f0680082",
+        "type": "tls-config",
+        "name": "Accept_self_signed",
+        "cert": "",
+        "key": "",
+        "ca": "",
+        "certname": "",
+        "keyname": "",
+        "caname": "",
+        "servername": "",
+        "verifyservercert": false,
+        "alpnprotocol": ""
+    }
+]
