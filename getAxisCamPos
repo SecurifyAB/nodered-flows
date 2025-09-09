@@ -1,0 +1,72 @@
+[
+    {
+        "id": "8d54ecfcdad4d34d",
+        "type": "debug",
+        "z": "32c6885c7d2d725c",
+        "name": "debug 7",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 560,
+        "y": 180,
+        "wires": []
+    },
+    {
+        "id": "98a8b30c6340bf24",
+        "type": "http request",
+        "z": "32c6885c7d2d725c",
+        "name": "",
+        "method": "GET",
+        "ret": "txt",
+        "paytoqs": "ignore",
+        "url": "http://10.69.65.186/axis-cgi/com/ptz.cgi?query=position?",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "digest",
+        "senderr": false,
+        "headers": [],
+        "x": 330,
+        "y": 180,
+        "wires": [
+            [
+                "8d54ecfcdad4d34d"
+            ]
+        ]
+    },
+    {
+        "id": "b6333edc34279649",
+        "type": "inject",
+        "z": "32c6885c7d2d725c",
+        "name": "",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 100,
+        "y": 180,
+        "wires": [
+            [
+                "98a8b30c6340bf24"
+            ]
+        ]
+    }
+]
