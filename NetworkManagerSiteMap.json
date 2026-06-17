@@ -1,0 +1,470 @@
+[
+    {
+        "id": "04a5753d1cd88563",
+        "type": "tab",
+        "label": "Site Map",
+        "disabled": false,
+        "info": "",
+        "env": []
+    },
+    {
+        "id": "5f9359576f313fb3",
+        "type": "ui-event",
+        "z": "04a5753d1cd88563",
+        "ui": "d1e2f3a4.b5c6d7",
+        "name": "On Live Map Page Load",
+        "x": 150,
+        "y": 120,
+        "wires": [
+            [
+                "0d53f125ecdce0fe",
+                "a7deecd6bfad7c12",
+                "bf287481c875efcf"
+            ]
+        ]
+    },
+    {
+        "id": "0d53f125ecdce0fe",
+        "type": "function",
+        "z": "04a5753d1cd88563",
+        "name": "Build All Paths Query",
+        "func": "// This query selects all zones and aggregates their path segments\n// into a JSON array, ordered by meter position.\nmsg.query = `\n    SELECT \n        z.zone_id, \n        z.meter_start, \n        z.meter_end, \n        json_agg(\n            json_build_object(\n                'x', m.x_coord, \n                'y', m.y_coord,\n                'meter', m.meter_position\n            ) ORDER BY m.meter_position\n        ) AS path_points\n    FROM zones z\n    JOIN map_path_segments m ON z.zone_id = m.zone_id\n    GROUP BY z.zone_id, z.meter_start, z.meter_end;\n`;\nmsg.payload = null;\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 420,
+        "y": 120,
+        "wires": [
+            [
+                "c0b94314d1319131"
+            ]
+        ]
+    },
+    {
+        "id": "c0b94314d1319131",
+        "type": "postgresql",
+        "z": "04a5753d1cd88563",
+        "name": "Get All Paths",
+        "query": "",
+        "postgreSQLConfig": "112969890e9876a0",
+        "split": false,
+        "rowsPerMsg": 1,
+        "outputs": 1,
+        "x": 630,
+        "y": 120,
+        "wires": [
+            [
+                "e99e1f59f3f95471"
+            ]
+        ]
+    },
+    {
+        "id": "e99e1f59f3f95471",
+        "type": "function",
+        "z": "04a5753d1cd88563",
+        "name": "Format All Paths",
+        "func": "// msg.payload is an array of all zones with their path_points\nconst zones = msg.payload;\n\n// We need to save this to a flow variable so our alarm\n// processor can use it later for interpolation.\nflow.set(\"all_zone_paths\", zones);\n\n// Send this to the operator map to draw everything\nmsg.payload = { type: \"LOAD_ALL_ZONES\", zones: zones };\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 840,
+        "y": 120,
+        "wires": [
+            [
+                "493ca686ddd04872"
+            ]
+        ]
+    },
+    {
+        "id": "493ca686ddd04872",
+        "type": "ui-template",
+        "z": "04a5753d1cd88563",
+        "group": "0c32d823ab741d49",
+        "page": "",
+        "ui": "",
+        "name": "Operator Map",
+        "order": 1,
+        "width": "7",
+        "height": "12",
+        "head": "",
+        "format": "<template>\n    <div \n        style=\"width: 100%; height: 100%; border: 1px solid #333; overflow: hidden; position: relative;\"\n        @wheel.prevent=\"onWheel\"\n        @mousedown.prevent=\"onMouseDown\"\n        @mousemove.prevent=\"onMouseMove\"\n        @mouseup.prevent=\"onMouseUp\"\n        @mouseleave.prevent=\"onMouseLeave\"\n        :style=\"{ cursor: isPanning ? 'grabbing' : 'grab' }\"\n        ref=\"mapContainer\"\n    >\n        <div \n            style=\"position: relative; width: fit-content; height: fit-content; transform-origin: 0 0;\"\n            :style=\"panningContainerStyle\"\n        >\n            <img \n                :src=\"mapUrl\" \n                @load=\"onMapLoad\"\n                style=\"display: block; pointer-events: none;\"\n                ref=\"mapImage\"\n                draggable=\"false\"\n            >\n            \n            \n            <svg \n                :style=\"svgStyle\"\n                style=\"position: absolute; top: 0; left: 0; pointer-events: none;\"\n            >\n                \n                <path v-for=\"(zone, zoneId) in zones\" :key=\"zoneId\"\n                    :d=\"zone.svgPath\"\n                    :stroke=\"zone.color\"\n                    stroke-width=\"5\"\n                    fill=\"none\"\n                />\n\n                \n                <circle v-for=\"(zone, zoneId) in alarmZones\" :key=\"'dot-' + zoneId\"\n                    :cx=\"zone.alarm_coords.x\"\n                    :cy=\"zone.alarm_coords.y\"\n                    r=\"8\"\n                    fill=\"red\"\n                    stroke=\"white\"\n                    stroke-width=\"2\"\n                />\n\n                \n                <g \n                    style=\"font-size: 10px; font-weight: bold; text-anchor: middle; dominant-baseline: middle; pointer-events: none;\"\n                >\n                    <text v-for=\"(label, index) in labels\" :key=\"'label-' + index\"\n                        :x=\"label.x_coord\"\n                        :y=\"label.y_coord\"\n                        fill=\"white\"\n                        stroke=\"black\"\n                        stroke-width=\"0.5\"\n                        paint-order=\"stroke\"\n                    >\n                        {{ label.label_text }}\n                    </text>\n                </g>\n\n            </svg>\n        </div>\n    </div>\n</template>\n\n<script>\n    export default {\n        watch: {\n            msg(msg) {\n                if (!msg.payload) return;\n\n                if (msg.payload.type === \"LOAD_ALL_ZONES\") {\n                    // This is the initial data from the DB\n                    this.processZoneData(msg.payload.zones);\n                }\n                if (msg.payload.type === \"LOAD_ALL_LABELS\") {\n                    // This is the new label data from the DB\n                    this.labels = msg.payload.labels;\n                }\n                if (msg.payload.type === \"LOAD_DEFAULT_VIEW\") {\n                    // This is the new view data from the DB\n                    this.scale = msg.payload.view.scale;\n                    this.translateX = msg.payload.view.translateX;\n                    this.translateY = msg.payload.view.translateY;\n                }\n                if (msg.payload.type === \"ALARM_UPDATE\") {\n                    // This is a live alarm from the Senstar flow\n                    this.handleAlarm(msg.payload.alarm);\n                }\n                if (msg.payload.type === \"ALARM_CLEAR\") {\n                    // This is a clear message\n                    this.handleClear(msg.payload.zone_id);\n                }\n            }\n        },\n        data() {\n            return {\n                mapUrl: \"/map-image?_t=\" + Date.now(),\n                svgStyle: {\n                    width: '0px',\n                    height: '0px'\n                },\n                zones: {},\n                labels: [], // <-- ADDED to store labels\n                scale: 1,\n                translateX: 0,\n                translateY: 0,\n                isPanning: false,\n                panStartX: 0,\n                panStartY: 0\n            }\n        },\n        computed: {\n            alarmZones() {\n                return Object.values(this.zones).filter(z => z.inAlarm);\n            },\n            panningContainerStyle() {\n                return {\n                    transform: `scale(${this.scale}) translate(${this.translateX}px, ${this.translateY}px)`\n                };\n            }\n        },\n        methods: {\n            onMapLoad() {\n                const img = this.$refs.mapImage;\n                if (img) {\n                    this.svgStyle.width = img.naturalWidth + 'px';\n                    this.svgStyle.height = img.naturalHeight + 'px';\n                }\n            },\n            generateSvgPath(path_points) {\n                if (!path_points || path_points.length < 2 || path_points[0] === null) return \"\";\n                const firstPoint = path_points[0];\n                const otherPoints = path_points.slice(1).map(p => `L ${p.x} ${p.y}`).join(\" \");\n                return `M ${firstPoint.x} ${firstPoint.y} ${otherPoints}`;\n            },\n            processZoneData(zonesData) {\n                let newZones = {};\n                zonesData.forEach(zone => {\n                    // Check for valid path_points array before generating SVG\n                    if (zone.path_points && zone.path_points.length > 0 && zone.path_points[0] && zone.path_points[0].x !== null) {\n                         newZones[zone.zone_id] = {\n                            ...zone,\n                            svgPath: this.generateSvgPath(zone.path_points),\n                            inAlarm: false,\n                            color: 'lime',\n                            alarm_coords: null\n                        }\n                    }\n                });\n                this.zones = newZones;\n            },\n            handleAlarm(alarm) {\n                const zone = this.zones[alarm.zone_id];\n                if (zone) {\n                    zone.inAlarm = true;\n                    zone.color = 'red';\n                    zone.alarm_coords = alarm.coords;\n                }\n            },\n            handleClear(zone_id) {\n                const zone = this.zones[zone_id];\n                if (zone) {\n                    zone.inAlarm = false;\n                    zone.color = 'lime';\n                    zone.alarm_coords = null;\n                }\n            },\n            onMouseDown(event) {\n                this.isPanning = true;\n                this.panStartX = event.clientX;\n                this.panStartY = event.clientY;\n            },\n            onMouseUp(event) {\n                this.isPanning = false;\n            },\n            onMouseLeave(event) {\n                this.isPanning = false;\n            },\n            onMouseMove(event) {\n                if (!this.isPanning) return;\n                const dx = (event.clientX - this.panStartX) / this.scale;\n                const dy = (event.clientY - this.panStartY) / this.scale;\n                this.translateX += dx;\n                this.translateY += dy;\n                this.panStartX = event.clientX;\n                this.panStartY = event.clientY;\n            },\n            onWheel(event) {\n                const minScale = 0.2;\n                const maxScale = 10;\n                const zoomIntensity = 0.1;\n\n                const delta = event.deltaY > 0 ? -1 : 1;\n                const zoomFactor = 1 + delta * zoomIntensity;\n\n                const oldScale = this.scale;\n                let newScale = oldScale * zoomFactor;\n\n                // Clamp scale\n                if (newScale < minScale) newScale = minScale;\n                if (newScale > maxScale) newScale = maxScale;\n                \n                if (newScale === oldScale) return;\n\n                const rect = this.$refs.mapContainer.getBoundingClientRect();\n                const mouseX = event.clientX - rect.left;\n                const mouseY = event.clientY - rect.top;\n\n                // Position of mouse on the un-scaled content\n                const mouseOnContentX = (mouseX / oldScale) - this.translateX;\n                const mouseOnContentY = (mouseY / oldScale) - this.translateY;\n                \n                // Calculate new translation to keep mouseOnContent at the same screen position\n                this.translateX = (mouseX / newScale) - mouseOnContentX;\n                this.translateY = (mouseY / newScale) - mouseOnContentY;\n                this.scale = newScale;\n            }\n        }\n    }\n</script>",
+        "storeOutMessages": true,
+        "passthru": true,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "",
+        "x": 1080,
+        "y": 160,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "0d639898e231d5b7",
+        "type": "http in",
+        "z": "04a5753d1cd88563",
+        "name": "GET /map-image",
+        "url": "/map-image",
+        "method": "get",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 180,
+        "y": 320,
+        "wires": [
+            [
+                "c150cee72e6f5356"
+            ]
+        ]
+    },
+    {
+        "id": "c150cee72e6f5356",
+        "type": "function",
+        "z": "04a5753d1cd88563",
+        "name": "Build Image SELECT Query",
+        "func": "msg.query = \"SELECT mime_type, image_data FROM map_images WHERE id = 'main_map'\";\nmsg.payload = null; // No parameters needed\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 390,
+        "y": 320,
+        "wires": [
+            [
+                "c8f839533f68e95a"
+            ]
+        ]
+    },
+    {
+        "id": "c8f839533f68e95a",
+        "type": "postgresql",
+        "z": "04a5753d1cd88563",
+        "name": "Get Image from DB",
+        "query": "",
+        "postgreSQLConfig": "112969890e9876a0",
+        "split": false,
+        "rowsPerMsg": 1,
+        "outputs": 1,
+        "x": 610,
+        "y": 320,
+        "wires": [
+            [
+                "756125e103b709e6"
+            ]
+        ]
+    },
+    {
+        "id": "756125e103b709e6",
+        "type": "function",
+        "z": "04a5753d1cd88563",
+        "name": "Format HTTP Response",
+        "func": "// msg.payload will be an array with one result\nif (!msg.payload || msg.payload.length === 0 || !msg.payload[0].image_data) {\n    msg.statusCode = 404;\n    msg.payload = \"Map image not found in database.\";\n    return msg;\n}\n\nconst db_row = msg.payload[0];\n\n// Set the content type header to tell the browser this is an image\nmsg.headers = {\n    \"Content-Type\": db_row.mime_type\n};\n\n// Set the payload to be the raw image buffer\nmsg.payload = db_row.image_data;\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 840,
+        "y": 320,
+        "wires": [
+            [
+                "26de22392e6a5c9a"
+            ]
+        ]
+    },
+    {
+        "id": "26de22392e6a5c9a",
+        "type": "http response",
+        "z": "04a5753d1cd88563",
+        "name": "",
+        "statusCode": "",
+        "headers": {},
+        "x": 1050,
+        "y": 320,
+        "wires": []
+    },
+    {
+        "id": "d791cf6f7321368b",
+        "type": "function",
+        "z": "04a5753d1cd88563",
+        "name": "Format Alarm for Map",
+        "func": "// --- Helper Functions (copy/paste these) ---\n\n// Calculates distance between {x, y} points\nfunction getDistance(p1, p2) {\n    const dx = p1.x - p2.x;\n    const dy = p1.y - p2.y;\n    return Math.sqrt(dx * dx + dy * dy);\n}\n\n// Main function to find (x, y) from a meter value\nfunction meterToCoords(meterValue, zoneData) {\n    if (!zoneData || !zoneData.path_points || zoneData.path_points.length < 2 || zoneData.path_points[0] === null) {\n        return null; // Not enough data to interpolate\n    }\n    \n    const path_points = zoneData.path_points;\n    const meter_start = zoneData.meter_start;\n    const meter_end = zoneData.meter_end;\n    const total_meter_length = meter_end - meter_start;\n    \n    if (total_meter_length <= 0) {\n        return { x: path_points[0].x, y: path_points[0].y }; // No length, return start\n    }\n\n    // 1. Calculate Total Pixel Length\n    let total_pixel_length = 0;\n    let cumulative_pixel_lengths = [0];\n    for (let i = 1; i < path_points.length; i++) {\n        total_pixel_length += getDistance(path_points[i - 1], path_points[i]);\n        cumulative_pixel_lengths.push(total_pixel_length);\n    }\n    \n    if (total_pixel_length === 0) {\n         return { x: path_points[0].x, y: path_points[0].y };\n    }\n\n    // 2. Find target pixel distance\n    const meter_ratio = (meterValue - meter_start) / total_meter_length;\n    const target_pixel_distance = meter_ratio * total_pixel_length;\n\n    // 3. Find the correct path segment\n    for (let i = 1; i < path_points.length; i++) {\n        const p_start = path_points[i - 1];\n        const p_end = path_points[i];\n        const segment_start_px = cumulative_pixel_lengths[i - 1];\n        const segment_end_px = cumulative_pixel_lengths[i];\n\n        if (target_pixel_distance >= segment_start_px && target_pixel_distance <= segment_end_px) {\n            // This is the segment!\n            const segment_length_px = segment_end_px - segment_start_px;\n            if (segment_length_px === 0) {\n                return { x: p_start.x, y: p_start.y };\n            }\n            \n            const segment_ratio = (target_pixel_distance - segment_start_px) / segment_length_px;\n            \n            // Interpolate coordinates\n            const x = p_start.x + (p_end.x - p_start.x) * segment_ratio;\n            const y = p_start.y + (p_end.y - p_start.y) * segment_ratio;\n            return { x: x, y: y };\n        }\n    }\n    \n    // Fallback: if meter value is outside range, clamp to start or end\n    if (meterValue <= meter_start) return { x: path_points[0].x, y: path_points[0].y };\n    return { x: path_points[path_points.length - 1].x, y: path_points[path_points.length - 1].y };\n}\n\n\n// --- Main Node Logic ---\n\n// Get the decoded alarm data\nconst alarm = msg.payload;\nconst zone_id = alarm.description; // e.g., \"Zone_1\"\n\n// Get the map data we saved earlier\nconst all_zone_paths = flow.get(\"all_zone_paths\");\n\nif (!all_zone_paths) {\n    node.warn(\"all_zone_paths not in flow context yet.\");\n    return null;\n}\n\n// Find the specific zone's data\nconst zoneData = all_zone_paths.find(z => z.zone_id === zone_id);\nif (!zoneData) {\n    node.warn(`No map data found for zone: ${zone_id}`);\n    return null;\n}\n\n// Check if this is an ALARM or a CLEAR\nif (alarm.alarm) {\n    // This is an ALARM\n    let alarm_meter;\n    if (alarm.locations && alarm.locations.length > 0) {\n        // Use the first location's meter value\n        alarm_meter = alarm.locations[0].distance_m;\n    } else {\n        // No location, just put the dot in the middle of the zone\n        alarm_meter = (zoneData.meter_start + zoneData.meter_end) / 2;\n    }\n\n    // Convert meter value to (x, y)\n    const coords = meterToCoords(alarm_meter, zoneData);\n\n    if (!coords) {\n        // This can happen if a zone has an alarm but no path drawn for it yet\n        // node.warn(`Could not calculate coordinates for ${zone_id} at ${alarm_meter}m`);\n        return null;\n    }\n    \n    msg.payload = {\n        type: \"ALARM_UPDATE\",\n        alarm: {\n            zone_id: zone_id,\n            coords: coords\n        }\n    };\n    return msg;\n\n} else {\n    // This is a CLEAR message\n    msg.payload = {\n        type: \"ALARM_CLEAR\",\n        zone_id: zone_id\n    };\n    return msg;\n}\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 820,
+        "y": 240,
+        "wires": [
+            [
+                "493ca686ddd04872"
+            ]
+        ]
+    },
+    {
+        "id": "86cf2055e4edfcbc",
+        "type": "link in",
+        "z": "04a5753d1cd88563",
+        "name": "alarms for map",
+        "links": [
+            "dc24e9475cda970c"
+        ],
+        "x": 665,
+        "y": 240,
+        "wires": [
+            [
+                "d791cf6f7321368b"
+            ]
+        ]
+    },
+    {
+        "id": "a7deecd6bfad7c12",
+        "type": "function",
+        "z": "04a5753d1cd88563",
+        "name": "Build Label SELECT",
+        "func": "msg.query = \"SELECT label_id, label_text, x_coord, y_coord FROM map_labels\";\nmsg.payload = null;\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 420,
+        "y": 180,
+        "wires": [
+            [
+                "c2626ed65b98af7a"
+            ]
+        ]
+    },
+    {
+        "id": "c2626ed65b98af7a",
+        "type": "postgresql",
+        "z": "04a5753d1cd88563",
+        "name": "Get Labels",
+        "query": "",
+        "postgreSQLConfig": "112969890e9876a0",
+        "split": false,
+        "rowsPerMsg": 1,
+        "outputs": 1,
+        "x": 630,
+        "y": 180,
+        "wires": [
+            [
+                "4816fc120ab791ff"
+            ]
+        ]
+    },
+    {
+        "id": "4816fc120ab791ff",
+        "type": "function",
+        "z": "04a5753d1cd88563",
+        "name": "Format Labels",
+        "func": "msg.payload = {\n    type: \"LOAD_ALL_LABELS\",\n    labels: msg.payload\n};\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 840,
+        "y": 180,
+        "wires": [
+            [
+                "493ca686ddd04872"
+            ]
+        ]
+    },
+    {
+        "id": "bf287481c875efcf",
+        "type": "function",
+        "z": "04a5753d1cd88563",
+        "name": "Build View SELECT",
+        "func": "msg.query = \"SELECT scale, translate_x, translate_y FROM map_config WHERE id = 'default_view'\";\nmsg.payload = null;\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 410,
+        "y": 60,
+        "wires": [
+            [
+                "824d91886f2bb82a"
+            ]
+        ]
+    },
+    {
+        "id": "824d91886f2bb82a",
+        "type": "postgresql",
+        "z": "04a5753d1cd88563",
+        "name": "Get Default View",
+        "query": "",
+        "postgreSQLConfig": "112969890e9876a0",
+        "split": false,
+        "rowsPerMsg": 1,
+        "outputs": 1,
+        "x": 610,
+        "y": 60,
+        "wires": [
+            [
+                "4b5a22db63423b29"
+            ]
+        ]
+    },
+    {
+        "id": "4b5a22db63423b29",
+        "type": "function",
+        "z": "04a5753d1cd88563",
+        "name": "Format Default View",
+        "func": "let view_config = {};\n// Check if we got a result and it's not empty\nif (msg.payload && msg.payload.length > 0 && msg.payload[0]) {\n    view_config = msg.payload[0];\n} else {\n    // Fallback to default if no view is saved\n    view_config = { scale: 1, translate_x: 0, translate_y: 0 };\n}\n\nmsg.payload = {\n    type: \"LOAD_DEFAULT_VIEW\",\n    view: {\n        scale: parseFloat(view_config.scale) || 1,\n        translateX: parseFloat(view_config.translate_x) || 0,\n        translateY: parseFloat(view_config.translate_y) || 0\n    }\n};\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 820,
+        "y": 60,
+        "wires": [
+            [
+                "493ca686ddd04872"
+            ]
+        ]
+    },
+    {
+        "id": "d1e2f3a4.b5c6d7",
+        "type": "ui-base",
+        "name": "Configuration",
+        "path": "/dashboard",
+        "appIcon": "",
+        "includeClientData": true,
+        "acceptsClientConfig": [
+            "ui-control",
+            "ui-notification",
+            "ui-iframe"
+        ],
+        "showPathInSidebar": false,
+        "headerContent": "dashpage",
+        "navigationStyle": "icon",
+        "titleBarStyle": "hidden",
+        "showReconnectNotification": true,
+        "notificationDisplayTime": 5,
+        "showDisconnectNotification": true,
+        "allowInstall": true
+    },
+    {
+        "id": "112969890e9876a0",
+        "type": "postgreSQLConfig",
+        "name": "PostgreSQL-dFuse",
+        "host": "DB_HOST",
+        "hostFieldType": "env",
+        "port": 5432,
+        "portFieldType": "num",
+        "database": "dfuse",
+        "databaseFieldType": "str",
+        "ssl": "false",
+        "sslFieldType": "bool",
+        "applicationName": "nodered1",
+        "applicationNameType": "str",
+        "max": 10,
+        "maxFieldType": "num",
+        "idle": 1000,
+        "idleFieldType": "num",
+        "connectionTimeout": 10000,
+        "connectionTimeoutFieldType": "num",
+        "user": "DB_USER",
+        "userFieldType": "env",
+        "password": "DB_PASSWORD",
+        "passwordFieldType": "env"
+    },
+    {
+        "id": "0c32d823ab741d49",
+        "type": "ui-group",
+        "name": "Site Map",
+        "page": "f94a66ea36e93037",
+        "width": "7",
+        "height": "12",
+        "order": 1,
+        "showTitle": false,
+        "className": "",
+        "visible": "true",
+        "disabled": "true",
+        "groupType": "default"
+    },
+    {
+        "id": "f94a66ea36e93037",
+        "type": "ui-page",
+        "name": "Live Map",
+        "ui": "d1e2f3a4.b5c6d7",
+        "path": "/LiveMap",
+        "icon": "map",
+        "layout": "grid",
+        "theme": "t1u2v3w4.x5y6z7",
+        "breakpoints": [
+            {
+                "name": "Default",
+                "px": "0",
+                "cols": "3"
+            },
+            {
+                "name": "Tablet",
+                "px": "576",
+                "cols": "6"
+            },
+            {
+                "name": "Small Desktop",
+                "px": "768",
+                "cols": "9"
+            },
+            {
+                "name": "Desktop",
+                "px": "1024",
+                "cols": "12"
+            }
+        ],
+        "order": 6,
+        "className": "",
+        "visible": true,
+        "disabled": false
+    },
+    {
+        "id": "t1u2v3w4.x5y6z7",
+        "type": "ui-theme",
+        "name": "Theme Name",
+        "colors": {
+            "surface": "#030303",
+            "primary": "#3d71d9",
+            "bgPage": "#0f0f0f",
+            "groupBg": "#1a1919",
+            "groupOutline": "#343232"
+        },
+        "sizes": {
+            "density": "default",
+            "pagePadding": "24x",
+            "groupGap": "24px",
+            "groupBorderRadius": "6px",
+            "widgetGap": "12px"
+        }
+    },
+    {
+        "id": "1be79b08d08feb9f",
+        "type": "global-config",
+        "env": [],
+        "modules": {
+            "@flowfuse/node-red-dashboard": "1.29.0",
+            "node-red-contrib-postgresql": "0.15.4"
+        }
+    }
+]
