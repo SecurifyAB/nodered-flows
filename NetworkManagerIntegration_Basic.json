@@ -1,0 +1,828 @@
+[
+    {
+        "id": "b7a273021d8cf9ab",
+        "type": "tab",
+        "label": "Network Manager Integration",
+        "disabled": false,
+        "info": "",
+        "env": []
+    },
+    {
+        "id": "48a0ed5d321c89d5",
+        "type": "tcp request",
+        "z": "b7a273021d8cf9ab",
+        "name": "Senstar NM (Port 850)",
+        "server": "10.20.41.125",
+        "port": "850",
+        "out": "sit",
+        "ret": "buffer",
+        "splitc": " ",
+        "newline": "",
+        "trim": false,
+        "tls": "",
+        "x": 780,
+        "y": 580,
+        "wires": [
+            [
+                "749c09c2b05fe08c"
+            ]
+        ]
+    },
+    {
+        "id": "749c09c2b05fe08c",
+        "type": "function",
+        "z": "b7a273021d8cf9ab",
+        "name": "NMI Parser",
+        "func": "let buffer = context.get('buffer') || Buffer.alloc(0);\nbuffer = Buffer.concat([buffer, msg.payload]);\n\nlet messages = [];\n\nwhile (buffer.length >= 5) {\n    if (buffer[0] !== 0xE0 || buffer[1] !== 0x31) {\n        node.warn(\"Desync, dropping byte\");\n        buffer = buffer.slice(1);\n        continue;\n    }\n\n    const data_len = buffer.readUInt16LE(2);\n    const total_msg_len = 4 + data_len;\n\n    if (buffer.length < total_msg_len) {\n        break;\n    }\n\n    const nmi_msg = buffer.slice(0, total_msg_len);\n    messages.push({ payload: nmi_msg });\n\n    buffer = buffer.slice(total_msg_len);\n}\n\ncontext.set('buffer', buffer);\nif (messages.length > 0) {\n    node.send(messages);\n}\nreturn null;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 970,
+        "y": 580,
+        "wires": [
+            [
+                "7ddc0162b02b685b"
+            ]
+        ]
+    },
+    {
+        "id": "5cfaa211617a60f4",
+        "type": "function",
+        "z": "b7a273021d8cf9ab",
+        "name": "Decode Alarm (Type 16)",
+        "func": "const buf = msg.payload;\nconst msg_type_val = buf[4];\nlet msg_type_str = \"Unknown\";\n\nif (msg_type_val === 6) { \n    msg_type_str = \"SensorAlarm (Raw)\";\n} else if (msg_type_val === 16) { \n    msg_type_str = \"SensorAlarm (Filtered)\";\n} else {\n    return null;\n}\n\nconst device_addr = buf.readUInt16LE(5);\nconst alarm_point = buf.readUInt16LE(7);\n\nlet zone_num = null;\nlet description = `Point ${alarm_point}`;\n\nif (alarm_point === 1) {\n    description = \"AuxInput_1\";\n} else if (alarm_point === 2) {\n    description = \"AuxInput_2\";\n} else if (alarm_point >= 3 && alarm_point <= 62) { \n    zone_num = alarm_point - 2;\n    description = `Zone_${zone_num}`;\n} else if (alarm_point >= 71 && alarm_point <= 74) {\n    description = `OptInput_${alarm_point - 70}`;\n}\n\nconst status_byte = buf[9];\nconst is_alarm = (status_byte & 0x01) > 0;\nconst is_tamper = (status_byte & 0x02) > 0;\n\nconst loc_count = buf.readUInt16LE(10);\nlet locations = [];\n\nif (loc_count > 0) {\n    let offset = 12; \n    for (let i = 0; i < loc_count; i++) {\n        if (offset + 2 > buf.length) break; \n        const loc_word = buf.readUInt16LE(offset);\n        const distance = loc_word & 0x1FFF;\n        const side_val = (loc_word >> 14) & 0x01;\n        const active    = (loc_word >> 15) & 0x01;\n        locations.push({\n            \"distance_m\": distance,\n            \"side\": (side_val === 0) ? \"Side A\" : \"Side B\",\n            \"active\": (active === 1) ? true : false\n        });\n        offset += 2; \n    }\n}\n\nlet status = { fill: \"grey\", shape: \"dot\", text: \"Unknown\" };\nlet status_string = \"Unknown\";\n\nif (is_alarm) {\n    status.fill = \"red\";\n    status_string = \"Alarm\";\n    if (locations.length > 0 && locations[0].active) {\n        const loc = locations[0];\n        status.text = `ALARM: ${description} @ ${loc.distance_m}m (${loc.side})`;\n        status_string = `ALARM at ${loc.distance_m} meters (${loc.side})`;\n    } else {\n        status.text = `Alarm (Hold): ${description}`;\n        status_string = \"Alarm (Hold)\";\n    }\n} else if (is_tamper) {\n    status.fill = \"red\";\n    status.text = `TAMPER: ${description}`;\n    status_string = \"Tamper/Supervision\";\n} else if (status_byte === 0) {\n    status.fill = \"green\";\n    status.text = `Secure: ${description}`;\n    status_string = \"Secure\";\n} else {\n    status.fill = \"grey\";\n    status.text = `Status ${status_byte}: ${description}`;\n    status_string = `Status ${status_byte}`;\n}\n\nnode.status(status);\n\nmsg.topic = `NMI/Device_${device_addr}/${description}`;\nmsg.payload = {\n    \"type\": msg_type_str,\n    \"description\": description, \n    \"device\": device_addr,\n    \"point_raw\": alarm_point,\n    \"zone\": zone_num,\n    \"status_raw\": status_byte,\n    \"status_string\": status_string,\n    \"alarm\": is_alarm,\n    \"tamper\": is_tamper,\n    \"location_count\": loc_count,\n    \"locations\": locations,\n    \"timestamp\": new Date().toISOString()\n};\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1490,
+        "y": 200,
+        "wires": [
+            [
+                "74e1270447fd071d"
+            ]
+        ]
+    },
+    {
+        "id": "74e1270447fd071d",
+        "type": "debug",
+        "z": "b7a273021d8cf9ab",
+        "name": "ALARM",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1760,
+        "y": 200,
+        "wires": []
+    },
+    {
+        "id": "30733578bb72c855",
+        "type": "debug",
+        "z": "b7a273021d8cf9ab",
+        "name": "Heartbeat OK",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1480,
+        "y": 260,
+        "wires": []
+    },
+    {
+        "id": "dd6c4eb6828faa90",
+        "type": "function",
+        "z": "b7a273021d8cf9ab",
+        "name": "Decode Pre-Alarm (Type 21)",
+        "func": "const buf = msg.payload;\nconst device_addr = buf.readUInt16LE(5);\nconst point_count = buf.readUInt16LE(7);\n\nlet pre_alarms = [];\nlet status_text = \"Pre-Alarm Secure\";\nlet status_fill = \"green\";\n\nfor (let i = 0; i < point_count; i++) {\n    const byte_index = 9 + Math.floor(i / 8);\n    const bit_index = i % 8;\n    \n    if (byte_index >= buf.length) break;\n    \n    const byte = buf[byte_index];\n    const is_pre_alarm = (byte >> bit_index) & 0x01;\n    \n    if (is_pre_alarm) {\n        const point = i + 1;\n        let zone = null;\n        let description = `Point ${point}`;\n        if (point >= 3) {\n            zone = point - 2;\n            description = `Zone_${zone}`;\n        }\n        pre_alarms.push({ point: point, zone: zone, description: description });\n    }\n}\n\nif (pre_alarms.length > 0) {\n    status_fill = \"yellow\";\n    status_text = `PRE-ALARM: ${pre_alarms[0].description}`;\n    if (pre_alarms.length > 1) {\n        status_text += ` (+${pre_alarms.length - 1} more)`;\n    }\n}\n\nnode.status({ fill: status_fill, shape: \"dot\", text: status_text });\n\nmsg.topic = `NMI/Device_${device_addr}/PreAlarm`;\nmsg.payload = {\n    \"type\": \"SensorPreAlarm\",\n    \"device\": device_addr,\n    \"active_pre_alarms\": pre_alarms,\n    \"timestamp\": new Date().toISOString()\n};\n\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1500,
+        "y": 320,
+        "wires": [
+            [
+                "daf3018d512409ba"
+            ]
+        ]
+    },
+    {
+        "id": "daf3018d512409ba",
+        "type": "debug",
+        "z": "b7a273021d8cf9ab",
+        "name": "PRE-ALARM",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1770,
+        "y": 320,
+        "wires": []
+    },
+    {
+        "id": "bc7136cc996b5f0f",
+        "type": "function",
+        "z": "b7a273021d8cf9ab",
+        "name": "Decode Shunt Status (Type 15)",
+        "func": "const buf = msg.payload;\nconst point_count = buf.readUInt16LE(7);\n\nlet all_shunt_states = [];\nlet shunted_items = [];\nlet status_text = \"Shunt Status Unknown\";\nlet status_fill = \"grey\";\n\nfor (let i = 0; i < point_count; i++) {\n    const point = i + 1;\n    const byte_index = 9 + Math.floor(i * 2 / 8);\n    const bit_index = (i * 2) % 8;\n\n    if (byte_index + 2 > buf.length) break;\n\n    const word = buf.readUInt16LE(byte_index);\n    const state = (word >> bit_index) & 0x03;\n\n    const is_alarm_shunted = (state & 0x01) > 0;\n    const is_tamper_shunted = (state & 0x02) > 0;\n    \n    let description = `Point_${point}`;\n    let zone = null;\n    if (point === 1) {\n        description = \"AuxInput_1\";\n    } else if (point === 2) {\n        description = \"AuxInput_2\";\n    } else if (point >= 3) {\n        zone = point - 2;\n        description = `Zone_${zone}`;\n    }\n\n    all_shunt_states.push({ point: point, zone: zone, description: description, alarm: is_alarm_shunted, tamper: is_tamper_shunted });\n\n    if (is_alarm_shunted) {\n        shunted_items.push(description.replace(\"_\", \" \"));\n    }\n}\n\nif (shunted_items.length > 0) {\n    status_fill = \"blue\";\n    status_text = \"Shunted: \" + shunted_items.join(', ');\n} else {\n    status_fill = \"green\";\n    status_text = \"Normal (All Points Un-shunted)\";\n}\n\nnode.status({ fill: status_fill, shape: \"dot\", text: status_text });\n\nmsg.payload = {\n    \"type\": \"ShuntStatus\",\n    \"shunted_items\": shunted_items,\n    \"all_points\": all_shunt_states\n};\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1510,
+        "y": 380,
+        "wires": [
+            [
+                "51ea8c0dd086593d"
+            ]
+        ]
+    },
+    {
+        "id": "51ea8c0dd086593d",
+        "type": "debug",
+        "z": "b7a273021d8cf9ab",
+        "name": "SHUNT STATUS",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1790,
+        "y": 380,
+        "wires": []
+    },
+    {
+        "id": "fd980c244865f7e4",
+        "type": "function",
+        "z": "b7a273021d8cf9ab",
+        "name": "Decode Device Type (Type 2)",
+        "func": "const buf = msg.payload;\nlet devices = [];\nlet offset = 5; \n\nwhile (offset + 10 <= buf.length) {\n    const devAddr = buf.readUInt16LE(offset);\n    const devType = buf.readUInt16LE(offset + 2);\n    const diagAlarms = buf.readUInt16LE(offset + 4);\n    const sensorAlarms = buf.readUInt16LE(offset + 6);\n    const controlPoints = buf.readUInt16LE(offset + 8);\n    \n    let typeName = `Unknown (0x${devType.toString(16)})`;\n    if (devType === 0x20F) typeName = \"FlexZone-60\"; \n    if (devType === 0x20B) typeName = \"FlexZone-20\"; \n    if (devType === 0x20D) typeName = \"FlexZone-4\";  \n    \n    devices.push({\n        address: devAddr,\n        typeHex: `0x${devType.toString(16)}`,\n        typeName: typeName,\n        diagAlarms: diagAlarms,\n        sensorAlarms: sensorAlarms,\n        controlPoints: controlPoints\n    });\n    offset += 10;\n}\n\nnode.status({fill:\"green\", shape:\"dot\", text:`Found ${devices.length} device(s)`});\nmsg.payload = { type: \"DeviceTypeInfo\", devices: devices };\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1510,
+        "y": 440,
+        "wires": [
+            [
+                "01560631ca3e371f"
+            ]
+        ]
+    },
+    {
+        "id": "01560631ca3e371f",
+        "type": "debug",
+        "z": "b7a273021d8cf9ab",
+        "name": "DEVICE INFO",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1780,
+        "y": 440,
+        "wires": []
+    },
+    {
+        "id": "0bfa90b59e289385",
+        "type": "function",
+        "z": "b7a273021d8cf9ab",
+        "name": "Decode Sensor In-Use (Type 22)",
+        "func": "const buf = msg.payload;\nconst deviceAddr = buf.readUInt16LE(5);\nconst point_count = buf.readUInt16LE(7);\n\nlet in_use_points = [];\n\nfor (let i = 0; i < point_count; i++) {\n    const point = i + 1;\n    const byte_index = 9 + Math.floor(i * 4 / 8); \n    const bit_index = (i * 4) % 8;\n    \n    if (byte_index + 1 > buf.length) break; \n\n    let nibble;\n    if (bit_index === 0) { \n        nibble = buf[byte_index] & 0x0F;\n    } else { \n        nibble = (buf[byte_index] >> 4) & 0x0F;\n    }\n    \n    const is_in_use = (nibble >> 3) & 0x01;\n    \n    if (is_in_use) {\n        let zone = null;\n        let description = `Point_${point}`;\n        if (point === 1) {\n            description = \"AuxInput_1\";\n        } else if (point === 2) {\n            description = \"AuxInput_2\";\n        } else if (point >= 3) {\n            zone = point - 2;\n            description = `Zone_${zone}`;\n        }\n        \n        in_use_points.push({\n            point: point,\n            zone: zone,\n            description: description,\n            alarm_supported: (nibble & 0x01) > 0,\n            tamper_supported: (nibble & 0x02) > 0,\n            prealarm_supported: (nibble & 0x04) > 0\n        });\n    }\n}\n\nnode.status({fill:\"green\", shape:\"dot\", text:`Dev ${deviceAddr}: ${in_use_points.length} points in use`});\nmsg.payload = {\n    type: \"SensorInUse\",\n    device: deviceAddr,\n    in_use_count: in_use_points.length,\n    in_use_points: in_use_points\n};\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1520,
+        "y": 500,
+        "wires": [
+            [
+                "69f03bbc3a16cdad"
+            ]
+        ]
+    },
+    {
+        "id": "69f03bbc3a16cdad",
+        "type": "debug",
+        "z": "b7a273021d8cf9ab",
+        "name": "IN-USE POINTS",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1780,
+        "y": 500,
+        "wires": []
+    },
+    {
+        "id": "d5eb1aa690496e89",
+        "type": "function",
+        "z": "b7a273021d8cf9ab",
+        "name": "Decode Comm Stat (Type 3)",
+        "func": "const buf = msg.payload;\nconst device_addr = buf.readUInt16LE(5);\nconst is_connected = buf[7] > 0;\nconst status_byte = buf[8];\n\nconst side_a_fault = (status_byte & 0x01) > 0;\nconst side_b_fault = (status_byte & 0x02) > 0;\n\nlet status_text = \"Comm OK\";\nlet status_fill = \"green\";\n\nif (!is_connected) {\n    status_text = \"COMM FAIL\";\n    status_fill = \"red\";\n} else if (side_a_fault || side_b_fault) {\n    status_text = \"Side Fault\";\n    status_fill = \"yellow\";\n}\n\nnode.status({ fill: status_fill, shape: \"dot\", text: status_text });\n\nmsg.payload = {\n    \"type\": \"CommStatus\",\n    \"device\": device_addr,\n    \"comm_fail\": !is_connected,\n    \"side_a_fault\": side_a_fault,\n    \"side_b_fault\": side_b_fault\n};\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1500,
+        "y": 560,
+        "wires": [
+            [
+                "b3e7151c0be3acb5"
+            ]
+        ]
+    },
+    {
+        "id": "b3e7151c0be3acb5",
+        "type": "debug",
+        "z": "b7a273021d8cf9ab",
+        "name": "COMM STATUS",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1780,
+        "y": 560,
+        "wires": []
+    },
+    {
+        "id": "773b4d316e1b0dd7",
+        "type": "function",
+        "z": "b7a273021d8cf9ab",
+        "name": "Decode Diag Alarm (Type 4)",
+        "func": "const diagMap = {\n    1: \"EnclosureTamper\",\n    2: \"ProgramFlashError\",\n    3: \"RAMError\",\n    4: \"ProcessorBootFail\",\n    5: \"8VRailFault\",\n    6: \"3VRailFault\",\n    7: \"1V8RailFault\",\n    8: \"1V2RailFault\",\n    9: \"InputPowerFail\",\n    10: \"SideAPowerFault\",\n    11: \"SideBPowerFault\",\n    12: \"SideASupervision\",\n    13: \"SideBSupervision\",\n    14: \"SideAInterference\",\n    15: \"SideBInterference\",\n    16: \"ProcessorOffline\",\n    17: \"GsmRcvrFault\",\n    18: \"GsmRcvrInterference\",\n    19: \"Gsm1_CommFail\",\n    20: \"Gsm1_EnclosureTamper\",\n    21: \"Gsm1_ProgramFlashError\",\n    22: \"Gsm1_I2CBusFault\",\n    23: \"GGsm1_2V7RailFault\",\n    24: \"Gsm1_LowPower\",\n    43: \"OptionCardFail\"\n};\n\nconst buf = msg.payload;\nconst devAddr = buf.readUInt16LE(5);\nconst point = buf.readUInt16LE(7);\nconst active = buf[9] > 0;\n\nconst name = diagMap[point] || `DiagPoint_${point}`;\n\nnode.status({\n    fill: active ? \"red\" : \"green\", \n    shape: \"dot\", \n    text: `${name}: ${active ? 'ACTIVE' : 'Inactive'}`\n});\n\nmsg.payload = {\n    type: \"DiagAlarm\",\n    device: devAddr,\n    point: point,\n    name: name,\n    active: active\n};\nmsg.topic = `NMI/Device_${devAddr}/Diag/${name}`;\nreturn msg;\n",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1500,
+        "y": 620,
+        "wires": [
+            [
+                "856d29a051a80ac6"
+            ]
+        ]
+    },
+    {
+        "id": "856d29a051a80ac6",
+        "type": "debug",
+        "z": "b7a273021d8cf9ab",
+        "name": "DIAG ALARM",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1780,
+        "y": 620,
+        "wires": []
+    },
+    {
+        "id": "bac430098e4cb640",
+        "type": "function",
+        "z": "b7a273021d8cf9ab",
+        "name": "Decode Control Status (Type 8)",
+        "func": "const outputMap = {\n    1: \"Relay_1\",\n    2: \"Relay_2\",\n    3: \"Relay_3\",\n    4: \"Relay_4\",\n    5: \"OptRelay_1\",\n    6: \"OptRelay_2\",\n    7: \"OptRelay_3\",\n    8: \"OptRelay_4\"\n};\n\nconst buf = msg.payload;\nconst devAddr = buf.readUInt16LE(5);\nconst point = buf.readUInt16LE(7);\nconst active = buf[9] > 0;\n\nconst name = outputMap[point] || `Output_${point}`;\n\nnode.status({\n    fill: active ? \"yellow\" : \"grey\", \n    shape: \"dot\", \n    text: `${name}: ${active ? 'Active' : 'Inactive'}`\n});\n\nmsg.payload = {\n    type: \"ControlStatus\",\n    device: devAddr,\n    point: point,\n    name: name,\n    active: active\n};\nmsg.topic = `NMI/Device_${devAddr}/Output/${name}`;\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1510,
+        "y": 680,
+        "wires": [
+            [
+                "073bb14eced4be13"
+            ]
+        ]
+    },
+    {
+        "id": "073bb14eced4be13",
+        "type": "debug",
+        "z": "b7a273021d8cf9ab",
+        "name": "CONTROL STATUS",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1800,
+        "y": 680,
+        "wires": []
+    },
+    {
+        "id": "1cea828d1a5780f1",
+        "type": "function",
+        "z": "b7a273021d8cf9ab",
+        "name": "Decode Device Summary (Type 19)",
+        "func": "// [function] Decode Device Summary (Type 19)\n// This node will ONLY update SUMMARY keys, not specific keys\n// to prevent conflicts with other decoders.\n\nconst buf = msg.payload;\nconst devAddr = buf.readUInt16LE(5);\nconst statusByte = buf[7];\n\nlet statusUpdates = [];\n\n// These are NEW, non-conflicting keys for the summary bits\nstatusUpdates.push({\n    name: \"Summary_CommFail_Mismatch\", // Bit 0\n    active: (statusByte & 0x01) > 0\n});\nstatusUpdates.push({\n    name: \"Summary_CommSideFault\",     // Bit 1\n    active: (statusByte & 0x02) > 0\n});\nstatusUpdates.push({\n    name: \"Summary_CriticalDiag\",      // Bit 2\n    active: (statusByte & 0x04) > 0\n});\nstatusUpdates.push({\n    name: \"Summary_WarningDiag\",       // Bit 3\n    active: (statusByte & 0x08) > 0\n});\nstatusUpdates.push({\n    name: \"Summary_EnclosureTamper\",   // Bit 4\n    active: (statusByte & 0x10) > 0\n});\n\n\nnode.status({fill:\"blue\", shape:\"dot\", text: `Summary: 0x${statusByte.toString(16)}`});\n\nmsg.payload = {\n    type: \"DiagAlarmList\",\n    device: devAddr,\n    statuses: statusUpdates\n};\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1520,
+        "y": 740,
+        "wires": [
+            [
+                "72e10dee618411c5"
+            ]
+        ]
+    },
+    {
+        "id": "72e10dee618411c5",
+        "type": "debug",
+        "z": "b7a273021d8cf9ab",
+        "name": "SUMMARY (Parsed)",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1800,
+        "y": 740,
+        "wires": []
+    },
+    {
+        "id": "7ddc0162b02b685b",
+        "type": "switch",
+        "z": "b7a273021d8cf9ab",
+        "name": "Route NMI Message",
+        "property": "payload[4]",
+        "propertyType": "msg",
+        "rules": [
+            {
+                "t": "eq",
+                "v": "16",
+                "vt": "num"
+            },
+            {
+                "t": "eq",
+                "v": "6",
+                "vt": "num"
+            },
+            {
+                "t": "eq",
+                "v": "1",
+                "vt": "num"
+            },
+            {
+                "t": "eq",
+                "v": "21",
+                "vt": "num"
+            },
+            {
+                "t": "eq",
+                "v": "15",
+                "vt": "num"
+            },
+            {
+                "t": "eq",
+                "v": "2",
+                "vt": "num"
+            },
+            {
+                "t": "eq",
+                "v": "22",
+                "vt": "num"
+            },
+            {
+                "t": "eq",
+                "v": "3",
+                "vt": "num"
+            },
+            {
+                "t": "eq",
+                "v": "4",
+                "vt": "num"
+            },
+            {
+                "t": "eq",
+                "v": "8",
+                "vt": "num"
+            },
+            {
+                "t": "eq",
+                "v": "19",
+                "vt": "num"
+            },
+            {
+                "t": "eq",
+                "v": "9",
+                "vt": "num"
+            },
+            {
+                "t": "eq",
+                "v": "5",
+                "vt": "num"
+            },
+            {
+                "t": "eq",
+                "v": "25",
+                "vt": "num"
+            },
+            {
+                "t": "eq",
+                "v": "17",
+                "vt": "num"
+            },
+            {
+                "t": "eq",
+                "v": "7",
+                "vt": "num"
+            },
+            {
+                "t": "eq",
+                "v": "26",
+                "vt": "num"
+            }
+        ],
+        "checkall": "true",
+        "repair": true,
+        "outputs": 17,
+        "x": 1160,
+        "y": 580,
+        "wires": [
+            [
+                "5cfaa211617a60f4"
+            ],
+            [
+                "5cfaa211617a60f4"
+            ],
+            [
+                "30733578bb72c855"
+            ],
+            [
+                "dd6c4eb6828faa90"
+            ],
+            [
+                "bc7136cc996b5f0f"
+            ],
+            [
+                "fd980c244865f7e4"
+            ],
+            [
+                "0bfa90b59e289385"
+            ],
+            [
+                "d5eb1aa690496e89"
+            ],
+            [
+                "773b4d316e1b0dd7"
+            ],
+            [
+                "bac430098e4cb640"
+            ],
+            [
+                "1cea828d1a5780f1"
+            ],
+            [
+                "98d4d7d724a3237b"
+            ],
+            [
+                "3f85badafae278fc"
+            ],
+            [
+                "87d73380a2719a5c"
+            ],
+            [
+                "5622149979ea09ab"
+            ],
+            [
+                "5622149979ea09ab"
+            ],
+            [
+                "6505e065d6d8cad1"
+            ]
+        ]
+    },
+    {
+        "id": "98d4d7d724a3237b",
+        "type": "function",
+        "z": "b7a273021d8cf9ab",
+        "name": "Decode Controls (Type 9)",
+        "func": "// [function] Decode Controls (Type 9)\n// This node now sends ONE message with an ARRAY of all statuses\n// to prevent a race condition downstream.\n\nconst outputMap = {\n    1: \"Relay_1\",\n    2: \"Relay_2\",\n    3: \"Relay_3\",\n    4: \"Relay_4\",\n    5: \"OptRelay_1\",\n    6: \"OptRelay_2\",\n    7: \"OptRelay_3\",\n    8: \"OptRelay_4\"\n};\n\nconst buf = msg.payload;\nconst devAddr = buf.readUInt16LE(5);\nconst point_count = buf.readUInt16LE(7);\n\nlet all_output_statuses = []; // New array\n\nfor (let i = 0; i < point_count; i++) {\n    const point = i + 1;\n    const byte_index = 9 + Math.floor(i / 8);\n    const bit_index = i % 8;\n    \n    if (byte_index >= buf.length) break;\n    \n    const byte = buf[byte_index];\n    const active = (byte >> bit_index) & 0x01;\n    \n    const name = outputMap[point] || `Output_${point}`;\n    \n    // This is the same object as the Type 8 decoder\n    all_output_statuses.push({\n        type: \"ControlStatus\", \n        device: devAddr,\n        point: point,\n        name: name,\n        active: active > 0\n    });\n}\n\nnode.status(`Full control status for ${point_count} points`);\n\n// Send a SINGLE message with a new type and the full array\nmsg.payload = {\n    type: \"ControlStatusList\",\n    statuses: all_output_statuses\n};\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1490,
+        "y": 800,
+        "wires": [
+            [
+                "5cf7db4bd2b4bb74"
+            ]
+        ]
+    },
+    {
+        "id": "5b2b943225801eab",
+        "type": "inject",
+        "z": "b7a273021d8cf9ab",
+        "name": "Startup",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "1",
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 260,
+        "y": 620,
+        "wires": [
+            [
+                "6da3b591e5dd0736"
+            ]
+        ]
+    },
+    {
+        "id": "6da3b591e5dd0736",
+        "type": "function",
+        "z": "b7a273021d8cf9ab",
+        "name": "Consolidated Startup Queries",
+        "func": "// [function] Consolidated Startup Queries\n// Sends all initial queries in a timed sequence.\n\nfunction buildQuery(msgType, deviceId = 1) {\n    const buffer = Buffer.alloc(7);\n    buffer[0] = 0xE0;\n    buffer[1] = 0x31;\n    buffer.writeUInt16LE(3, 2); // Data Length\n    buffer[4] = msgType;\n    buffer.writeUInt16LE(deviceId, 5);\n    return { payload: buffer };\n}\n\n// t=0s: Get Device Info (Type 2)\nnode.send(buildQuery(0x02, 0xFFFF));\n\n// t=0.25s: Get Comm Status (Type 3)\nsetTimeout(() => {\n    node.send(buildQuery(0x03, 1)); // 0x03 is NM_MT_COMM_STAT\n}, 250);\n\n// t=0.5s: Get In-Use Sensor Points (Type 22)\nsetTimeout(() => {\n    node.send(buildQuery(0x16, 1));\n}, 500);\n\n// t=0.75s: Get All Filtered Sensor Alarms (Type 17)\nsetTimeout(() => {\n    node.send(buildQuery(0x11, 1));\n}, 750);\n\n// t=1.25s: Get Device Summary (Type 19)\nsetTimeout(() => {\n    node.send(buildQuery(0x13, 1));\n}, 1250);\n\n// t=1.75s: Get In-Use Control Points (Type 25)\nsetTimeout(() => {\n    node.send(buildQuery(0x19, 1));\n}, 1750);\n\n// t=2.25s: Get All Shunt Statuses (Type 15)\nsetTimeout(() => {\n    node.send(buildQuery(0x0F, 1));\n}, 2250);\n\n// t=2.75s: Get All Control Point Statuses (Type 9) \nsetTimeout(() => {\n    node.send(buildQuery(0x09, 1));\n}, 2750);\n\n// t=3.25s: Get All Diagnostic Alarms (Type 5)\nsetTimeout(() => {\n    node.send(buildQuery(0x05, 1));\n}, 3250);\n\n//\n// --- NEW QUERY ADDED HERE ---\n//\n// t=3.75s: Get Linear Ranges (Type 26)\nsetTimeout(() => {\n    node.send(buildQuery(0x1A, 1)); // 0x1A is NM_MT_LRANGE_ALARMS\n}, 3750);\n\n\nreturn null;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 510,
+        "y": 620,
+        "wires": [
+            [
+                "48a0ed5d321c89d5"
+            ]
+        ]
+    },
+    {
+        "id": "fa024b2629a5cfa6",
+        "type": "inject",
+        "z": "b7a273021d8cf9ab",
+        "name": "Poll tick 10s",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "10",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "10",
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 270,
+        "y": 540,
+        "wires": [
+            [
+                "6b8de65d8e2a0344"
+            ]
+        ]
+    },
+    {
+        "id": "6b8de65d8e2a0344",
+        "type": "function",
+        "z": "b7a273021d8cf9ab",
+        "name": "Consolidated Polling",
+        "func": "function buildQuery(msgType, deviceId = 1) {\n    const buffer = Buffer.alloc(7);\n    buffer[0] = 0xE0;\n    buffer[1] = 0x31;\n    buffer.writeUInt16LE(3, 2); \n    buffer[4] = msgType; \n    buffer.writeUInt16LE(deviceId, 5); \n    return { payload: buffer };\n}\n\nfunction buildHeartbeat() {\n    const buffer = Buffer.alloc(7);\n    buffer[0] = 0xE0;\n    buffer[1] = 0x31;\n    buffer.writeUInt16LE(3, 2);\n    buffer[4] = 0x01;\n    buffer[5] = 0xAA;\n    buffer[6] = 0xFF;\n    return { payload: buffer };\n}\n\nlet count = context.get(\"pollCounter\") || 0;\ncount++;\n\n// --- Every 10 seconds (Runs on every tick) ---\nnode.send(buildQuery(0x0F, 1)); // 1. Get Shunt Status (Type 15)\n\n// --- Every 30 seconds (Runs on tick 3, 6, 9...) ---\nif (count % 3 === 0) {\n    node.log(\"Sending 30s poll pack\");\n    \n    node.send(buildHeartbeat());         // 1. Heartbeat (Type 1)\n    node.send(buildQuery(0x03, 1)); // 2. Get Comm Status (Type 3) <-- ADDED THIS\n    node.send(buildQuery(0x13, 1)); // 3. Get Device Summary (Type 19)\n    node.send(buildQuery(0x09, 1)); // 4. Get All Controls (Type 9)\n    node.send(buildQuery(0x05, 1)); // 5. Get All Diag Alarms (Type 5)\n}\n\nif (count >= 3) {\n    count = 0; \n}\ncontext.set(\"pollCounter\", count);\n\nreturn null;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 540,
+        "y": 540,
+        "wires": [
+            [
+                "48a0ed5d321c89d5"
+            ]
+        ]
+    },
+    {
+        "id": "3f85badafae278fc",
+        "type": "function",
+        "z": "b7a273021d8cf9ab",
+        "name": "Decode Diag Alarms (Type 5)",
+        "func": "// [function] Decode Diag Alarms (Type 5)\n// This node now sends ONE message with an ARRAY of all statuses\n// to prevent a race condition downstream.\n\nconst diagMap = {\n    1: \"EnclosureTamper\",\n    2: \"ProgramFlashError\",\n    3: \"RAMError\",\n    4: \"ProcessorBootFail\",\n    5: \"8VRailFault\",\n    6: \"3VRailFault\",\n    7: \"1V8RailFault\",\n    8: \"1V2RailFault\",\n    9: \"InputPowerFail\",\n    10: \"SideAPowerFault\",\n    11: \"SideBPowerFault\",\n    12: \"SideASupervision\",\n    13: \"SideBSupervision\",\n    14: \"SideAInterference\",\n    15: \"SideBInterference\",\n    16: \"ProcessorOffline\",\n    17: \"GsmRcvrFault\",\n    18: \"GsmRcvrInterference\",\n    19: \"Gsm1_CommFail\",\n    20: \"Gsm1_EnclosureTamper\",\n    21: \"Gsm1_ProgramFlashError\",\n    22: \"Gsm1_I2CBusFault\",\n    23: \"GGsm1_2V7RailFault\",\n    24: \"Gsm1_LowPower\",\n    43: \"OptionCardFail\"\n};\n\nconst buf = msg.payload;\nconst devAddr = buf.readUInt16LE(5);\nconst point_count = buf.readUInt16LE(7);\n\nlet statusUpdates = []; // New array\n\nfor (let i = 0; i < point_count; i++) {\n    const point = i + 1;\n    const byte_index = 9 + Math.floor(i / 8);\n    const bit_index = i % 8;\n\n    if (byte_index >= buf.length) break;\n\n    const byte = buf[byte_index];\n    const active = (byte >> bit_index) & 0x01;\n\n    const name = diagMap[point] || `DiagPoint_${point}`;\n    \n    statusUpdates.push({\n        name: name,\n        active: active > 0\n    });\n}\n\nnode.status(`${point_count} diag points processed`);\n\nmsg.payload = {\n    type: \"DiagAlarmList\",\n    device: devAddr,\n    statuses: statusUpdates\n};\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1500,
+        "y": 860,
+        "wires": [
+            [
+                "2eeea0bf5617e63b"
+            ]
+        ]
+    },
+    {
+        "id": "5cf7db4bd2b4bb74",
+        "type": "debug",
+        "z": "b7a273021d8cf9ab",
+        "name": "Decode Controls",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1790,
+        "y": 800,
+        "wires": []
+    },
+    {
+        "id": "2eeea0bf5617e63b",
+        "type": "debug",
+        "z": "b7a273021d8cf9ab",
+        "name": "DIAG Alarms",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1770,
+        "y": 860,
+        "wires": []
+    },
+    {
+        "id": "87d73380a2719a5c",
+        "type": "function",
+        "z": "b7a273021d8cf9ab",
+        "name": "Decode Control In-Use (Type 25)",
+        "func": "// [function] Decode Control In-Use (Type 25)\n// This decodes which control points are available.\n\nconst buf = msg.payload;\nconst devAddr = buf.readUInt16LE(5);\nconst point_count = buf.readUInt16LE(7);\n\n// This is the same map from your output nodes\nconst outputMap = {\n    1: \"Relay_1\",\n    2: \"Relay_2\",\n    3: \"Relay_3\",\n    4: \"Relay_4\",\n    5: \"OptRelay_1\",\n    6: \"OptRelay_2\",\n    7: \"OptRelay_3\",\n    8: \"OptRelay_4\"\n};\n\nlet in_use_controls = [];\n\n// Loop through each point in the bitmask\nfor (let i = 0; i < point_count; i++) {\n    const point = i + 1;\n    const byte_index = 9 + Math.floor(i / 8);\n    const bit_index = i % 8;\n\n    if (byte_index >= buf.length) break;\n\n    const byte = buf[byte_index];\n    const isInUse = (byte >> bit_index) & 0x01;\n\n    if (isInUse) {\n        const name = outputMap[point] || `Output_${point}`;\n        in_use_controls.push({\n            point: point,\n            name: name\n        });\n    }\n}\n\nnode.status(`${in_use_controls.length} controls in use`);\n\nmsg.payload = {\n    type: \"ControlInUse\",\n    device: devAddr,\n    in_use_controls: in_use_controls\n};\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1520,
+        "y": 920,
+        "wires": [
+            [
+                "7371bf9297413e34"
+            ]
+        ]
+    },
+    {
+        "id": "7371bf9297413e34",
+        "type": "debug",
+        "z": "b7a273021d8cf9ab",
+        "name": "In Use (25)",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1770,
+        "y": 920,
+        "wires": []
+    },
+    {
+        "id": "5622149979ea09ab",
+        "type": "function",
+        "z": "b7a273021d8cf9ab",
+        "name": "Decode Filter Alarms (Type 17)",
+        "func": "// [function] Decode Filter Alarms (Type 17)\n// This node now sends ONE message with an ARRAY of all statuses\n// to prevent a race condition downstream.\n\nconst buf = msg.payload;\nconst devAddr = buf.readUInt16LE(5);\nconst point_count = buf.readUInt16LE(7);\n\nlet all_point_statuses = []; // This will be the new payload\nlet point = 1;\n\n// Loop through the data bytes. Each byte holds 4 points (2 bits each).\nfor (let byte_index = 9; byte_index < buf.length; byte_index++) {\n    const byte = buf[byte_index];\n\n    for (let i = 0; i < 4; i++) { // 4 points per byte\n        if (point > point_count) break;\n\n        const state = (byte >> (i * 2)) & 0x03; // Get the 2 bits for this point\n        const is_alarm = (state & 0x01) > 0;\n        const is_tamper = (state & 0x02) > 0;\n\n        // --- This description logic MUST match your other decoders ---\n        let description = `Point ${point}`;\n        let zone_num = null;\n        if (point === 1) {\n            description = \"AuxInput_1\";\n        } else if (point === 2) {\n            description = \"AuxInput_2\";\n        } else if (point >= 3 && point <= 62) {\n            zone_num = point - 2;\n            description = `Zone_${zone_num}`;\n        } else if (point >= 71 && point <= 74) {\n            description = `OptInput_${point - 70}`;\n        }\n\n        let status_string = \"Secure\";\n        if (is_alarm) {\n            status_string = \"Alarm (Hold)\"; // No location info in this msg\n        } else if (is_tamper) {\n            status_string = \"Tamper/Supervision\";\n        }\n\n        all_point_statuses.push({\n            \"type\": \"SensorAlarm (Filtered)\", // Use same type as Type 16\n            \"description\": description,\n            \"device\": devAddr,\n            \"point_raw\": point,\n            \"zone\": zone_num,\n            \"status_raw\": state,\n            \"status_string\": status_string,\n            \"alarm\": is_alarm,\n            \"tamper\": is_tamper,\n            \"location_count\": 0,\n            \"locations\": [],\n            \"timestamp\": new Date().toISOString()\n        });\n\n        point++; // Move to the next point\n    }\n    if (point > point_count) break;\n}\n\nnode.status(`${all_point_statuses.length} points processed`);\n\n// Send a SINGLE message with a new type and the full array\nmsg.payload = {\n    type: \"FilteredAlarmList\",\n    points: all_point_statuses\n};\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1510,
+        "y": 980,
+        "wires": [
+            [
+                "e2845e4df3c77026"
+            ]
+        ]
+    },
+    {
+        "id": "e2845e4df3c77026",
+        "type": "debug",
+        "z": "b7a273021d8cf9ab",
+        "name": "Decode Filter Alarms (Type 17)",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1830,
+        "y": 980,
+        "wires": []
+    },
+    {
+        "id": "6505e065d6d8cad1",
+        "type": "function",
+        "z": "b7a273021d8cf9ab",
+        "name": "Decode Range Alarms (Type 26)",
+        "func": "// [function] Decode Range Alarms (Type 26)\nconst buf = msg.payload;\nconst devAddr = buf.readUInt16LE(5);\nconst numRanges = buf.readUInt16LE(7);\n\nlet messages_to_send = [];\n\nif (numRanges === 0 || numRanges === 0xFFFF) {\n    node.warn(`Device ${devAddr} reports no range information.`);\n    return null;\n}\n\nlet offset = 9; // Start of first range structure\n\nfor (let i = 0; i < numRanges; i++) {\n    if (offset + 11 > buf.length) {\n        node.warn(\"Buffer overflow reading range data\");\n        break;\n    }\n\n    const point_num = buf.readUInt16LE(offset);       // Bytes 10-11\n    // Byte 12 is 'side', we skip it (offset + 2)\n    const range_start = buf.readUInt32LE(offset + 3); // Bytes 13-16\n    const range_end = buf.readUInt32LE(offset + 7);   // Bytes 17-20\n\n    // Use your existing logic: Zone_1 = point 3, Zone_2 = point 4\n    if (point_num >= 3) { \n        const zone_id = \"Zone_\" + (point_num - 2);\n        \n        const sql_query = `\n            UPDATE zones \n            SET \n                meter_start = ${range_start}, \n                meter_end = ${range_end} \n            WHERE \n                zone_id = '${zone_id}';\n        `;\n\n        messages_to_send.push({\n            query: sql_query,\n            payload: null,\n            topic: `${zone_id} range: ${range_start}-${range_end}`\n        });\n    }\n\n    offset += 11; // Move to the next range structure\n}\n\nif (messages_to_send.length > 0) {\n    node.warn(`Found ${messages_to_send.length} zone ranges to update.`);\n    return [ messages_to_send ]; // Send all messages\n}\n\nreturn null;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1510,
+        "y": 1040,
+        "wires": [
+            [
+                "93de0959a971ae30"
+            ]
+        ]
+    },
+    {
+        "id": "93de0959a971ae30",
+        "type": "debug",
+        "z": "b7a273021d8cf9ab",
+        "name": "Range UPDATE Query",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "query",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1800,
+        "y": 1040,
+        "wires": []
+    }
+]
