@@ -1,0 +1,2835 @@
+[
+    {
+        "id": "0aa374ead5075515",
+        "type": "tab",
+        "label": "NetworkManager",
+        "disabled": false,
+        "info": "",
+        "env": []
+    },
+    {
+        "id": "21fe5cf8cb554508",
+        "type": "group",
+        "z": "0aa374ead5075515",
+        "name": "Alarm Counters",
+        "style": {
+            "label": true
+        },
+        "nodes": [
+            "9f42a61891c06343",
+            "ce08edefbbbeb6a5",
+            "1e0697df4af01765",
+            "09fb054ac8b30156",
+            "0ff69e5fbb27109c",
+            "bb57acb36cf9d5ec",
+            "041b938ec6948998",
+            "68a234f2e1aaf565",
+            "9fa61dd67bd358f1",
+            "d7077cc4abdd6840",
+            "58fe2edc85151e3f",
+            "PREALARM_LINK_IN",
+            "PREALARM_QUEUE",
+            "PREALARM_READ",
+            "PREALARM_INCREMENT",
+            "PREALARM_WRITE",
+            "PREALARM_POLL_INJECT",
+            "PREALARM_GET_COUNT",
+            "PREALARM_DASHBOARD",
+            "PREALARM_INIT_INJECT",
+            "PREALARM_INIT_READ",
+            "PREALARM_INIT_SET",
+            "0757130c0e7a3ae5",
+            "919c9de25d474309",
+            "RESET_BUTTON",
+            "RESET_FUNCTION",
+            "RESET_FILE_ALARM",
+            "RESET_FILE_PREALARM"
+        ],
+        "x": 94,
+        "y": 1179,
+        "w": 1312,
+        "h": 549.5
+    },
+    {
+        "id": "144687bed21f2ba3",
+        "type": "tcp request",
+        "z": "0aa374ead5075515",
+        "name": "Senstar NM (Port 850)",
+        "server": "10.20.41.125",
+        "port": "850",
+        "out": "sit",
+        "ret": "buffer",
+        "splitc": " ",
+        "newline": "",
+        "trim": false,
+        "tls": "",
+        "x": 1100,
+        "y": 340,
+        "wires": [
+            [
+                "aa63a62c15cee47f",
+                "c70798fcfed62117"
+            ]
+        ]
+    },
+    {
+        "id": "aa63a62c15cee47f",
+        "type": "function",
+        "z": "0aa374ead5075515",
+        "name": "NMI Parser",
+        "func": "let buffer = context.get('buffer') || Buffer.alloc(0);\nbuffer = Buffer.concat([buffer, msg.payload]);\n\nlet messages = [];\n\nwhile (buffer.length >= 5) {\n    if (buffer[0] !== 0xE0 || buffer[1] !== 0x31) {\n        node.warn(\"Desync, dropping byte\");\n        buffer = buffer.slice(1);\n        continue;\n    }\n\n    const data_len = buffer.readUInt16LE(2);\n    const total_msg_len = 4 + data_len;\n\n    if (buffer.length < total_msg_len) {\n        break;\n    }\n\n    const nmi_msg = buffer.slice(0, total_msg_len);\n    messages.push({ payload: nmi_msg });\n\n    buffer = buffer.slice(total_msg_len);\n}\n\ncontext.set('buffer', buffer);\nif (messages.length > 0) {\n    node.send(messages);\n}\nreturn null;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1350,
+        "y": 340,
+        "wires": [
+            [
+                "00fe39d1b79e347c"
+            ]
+        ]
+    },
+    {
+        "id": "cf2e4bb26156a831",
+        "type": "function",
+        "z": "0aa374ead5075515",
+        "name": "Decode Alarm (Type 16)",
+        "func": "// [Full Code for: Decode Alarm (Type 16)]\n// This node now has 2 outputs AND uses flow memory\n// to only count NEW *ZONE* alarms (rising-edge detection).\n\n// Output 1: Original alarm data (for your UI tables)\n// Output 2: Counter trigger (sends a message only on a NEW zone alarm)\n\nconst buf = msg.payload;\nconst msg_type_val = buf[4];\nlet msg_type_str = \"Unknown\";\n\nif (msg_type_val === 6) { \n    msg_type_str = \"SensorAlarm (Raw)\";\n} else if (msg_type_val === 16) { \n    msg_type_str = \"SensorAlarm (Filtered)\";\n} else {\n    return [null, null]; // Not the right type, stop\n}\n\n// --- Get Current States ---\nlet point_states = flow.get(\"alarm_point_states\") || {};\n\nconst device_addr = buf.readUInt16LE(5);\nconst alarm_point = buf.readUInt16LE(7);\n\nconst point_key = `${device_addr}:${alarm_point}`;\nconst was_alarm = point_states[point_key] || false;\n\nconst status_byte = buf[9];\nconst is_alarm = (status_byte & 0x01) > 0;\nconst is_tamper = (status_byte & 0x02) > 0;\n\n// --- Update and Save State ---\npoint_states[point_key] = is_alarm;\nflow.set(\"alarm_point_states\", point_states);\n\n\n// --- Build UI Message (for Output 1) ---\nconst loc_count = buf.readUInt16LE(10);\nlet locations = [];\nlet description = `Point ${alarm_point}`;\nlet zone_num = null;\n\nif (alarm_point === 1) {\n    description = \"AuxInput_1\";\n} else if (alarm_point === 2) {\n    description = \"AuxInput_2\";\n} else if (alarm_point >= 3 && alarm_point <= 62) { \n    zone_num = alarm_point - 2;\n    description = `Zone_${zone_num}`;\n} else if (alarm_point >= 71 && alarm_point <= 74) {\n    description = `OptInput_${alarm_point - 70}`;\n}\n\nif (loc_count > 0) {\n    let offset = 12; \n    for (let i = 0; i < loc_count; i++) {\n        if (offset + 2 > buf.length) break; \n        const loc_word = buf.readUInt16LE(offset);\n        const distance = loc_word & 0x1FFF;\n        const side_val = (loc_word >> 14) & 0x01;\n        const active    = (loc_word >> 15) & 0x01;\n        locations.push({\n            \"distance_m\": distance,\n            \"side\": (side_val === 0) ? \"Side A\" : \"Side B\",\n            \"active\": (active === 1) ? true : false\n        });\n        offset += 2; \n    }\n}\n\nlet status = { fill: \"grey\", shape: \"dot\", text: \"Unknown\" };\nlet status_string = \"Unknown\";\n\n// --- STATUS TEXT FIX IS HERE ---\nif (is_alarm) {\n    status.fill = \"red\";\n    status_string = \"Alarm\";\n    if (locations.length > 0 && locations[0].active) {\n        const loc = locations[0];\n        // This is the line you wanted changed:\n        status.text = `ALARM: ${description} @ ${loc.distance_m}m (Device ${device_addr} - ${loc.side})`;\n        status_string = `ALARM at ${loc.distance_m}m (Dev ${device_addr} - ${loc.side})`;\n    } else {\n        status.text = `Dev ${device_addr}: Alarm (Hold): ${description}`;\n        status_string = \"Alarm (Hold)\";\n    }\n} else if (is_tamper) {\n    status.fill = \"red\";\n    status.text = `Dev ${device_addr}: TAMPER: ${description}`;\n    status_string = \"Tamper/Supervision\";\n} else if (status_byte === 0) {\n    status.fill = \"green\";\n    status.text = `Dev ${device_addr}: Secure: ${description}`;\n    status_string = \"Secure\";\n} else {\n    status.fill = \"grey\";\n    status.text = `Dev ${device_addr}: Status ${status_byte}: ${description}`;\n    status_string = `Status ${status_byte}`;\n}\n\n// The generic prefix is no longer needed\nnode.status(status);\n// --- END OF FIX ---\n\n// This is the message for Output 1\nlet ui_msg = {\n    \"topic\": `NMI/Device_${device_addr}/${description}`,\n    \"payload\": {\n        \"type\": msg_type_str,\n        \"description\": description, \n        \"device\": device_addr,\n        \"point_raw\": alarm_point,\n        \"zone\": zone_num,\n        \"status_raw\": status_byte,\n        \"status_string\": status_string,\n        \"alarm\": is_alarm,\n        \"tamper\": is_tamper,\n        \"location_count\": loc_count,\n        \"locations\": locations,\n        \"timestamp\": new Date().toISOString()\n    }\n};\n\n// --- Counter Logic (NOW CHECKS DESCRIPTION) ---\nlet counter_msg = null;\nif (is_alarm && !was_alarm && description.startsWith(\"Zone_\")) {\n    counter_msg = { payload: 1 };\n    node.log(`NEW ZONE ALARM on ${point_key}, counting.`);\n} else if (is_alarm && !was_alarm) {\n    node.log(`New non-zone alarm (${description}) on ${point_key}, IGNORING for counter.`);\n}\n\n// Return both messages. \nreturn [ ui_msg, counter_msg ];",
+        "outputs": 2,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1910,
+        "y": 240,
+        "wires": [
+            [
+                "93d7eeee23b02017",
+                "326791daea6374a1",
+                "dc24e9475cda970c"
+            ],
+            [
+                "4b64a949630d0ba7"
+            ]
+        ]
+    },
+    {
+        "id": "93d7eeee23b02017",
+        "type": "debug",
+        "z": "0aa374ead5075515",
+        "name": "ALARM",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 2240,
+        "y": 240,
+        "wires": []
+    },
+    {
+        "id": "3629d8f7646be6ee",
+        "type": "debug",
+        "z": "0aa374ead5075515",
+        "name": "Heartbeat OK",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1900,
+        "y": 300,
+        "wires": []
+    },
+    {
+        "id": "3bbe9f911cfb9234",
+        "type": "function",
+        "z": "0aa374ead5075515",
+        "name": "Decode Pre-Alarm (Type 21)",
+        "func": "// [Full Code for: Decode Pre-Alarm (Type 21)]\nconst buf = msg.payload;\nconst device_addr = buf.readUInt16LE(5);\nconst point_count = buf.readUInt16LE(7);\n\nlet pre_alarm_states = flow.get(\"pre_alarm_point_states\") || {};\nlet new_active_pre_alarms = [];\nlet messages_to_send = [null, null]; // [ui_msg, counter_msg]\nlet counter_increment = 0;\n\nfor (let i = 0; i < point_count; i++) {\n    const point = i + 1;\n    const byte_index = 9 + Math.floor(i / 8);\n    const bit_index = i % 8;\n\n    if (byte_index >= buf.length) break;\n\n    const byte = buf[byte_index];\n    const is_pre_alarm = (byte >> bit_index) & 0x01;\n\n    const point_key = `${device_addr}:${point}`;\n    const was_pre_alarm = pre_alarm_states[point_key] || false;\n\n    if (is_pre_alarm) {\n        let zone = null;\n        let description = `Point ${point}`;\n        if (point >= 3) {\n            zone = point - 2;\n            description = `Zone_${zone}`;\n        }\n        new_active_pre_alarms.push({ point: point, zone: zone, description: description });\n\n        if (!was_pre_alarm) {\n            counter_increment++;\n            node.log(`NEW PRE-ALARM on ${point_key}, counting.`);\n        }\n    }\n\n    pre_alarm_states[point_key] = is_pre_alarm;\n}\n\nflow.set(\"pre_alarm_point_states\", pre_alarm_states);\n\n// --- UPDATED STATUS ---\nlet status_fill = \"green\";\nlet status_text = \"Pre-Alarm Secure\";\n\nif (new_active_pre_alarms.length > 0) {\n    status_fill = \"yellow\";\n    status_text = `PRE-ALARM: ${new_active_pre_alarms[0].description}`;\n    if (new_active_pre_alarms.length > 1) {\n        status_text += ` (+${new_active_pre_alarms.length - 1} more)`;\n    }\n}\n\n// Add device ID to the status\nnode.status({ fill: status_fill, shape: \"dot\", text: `Dev ${device_addr}: ${status_text}` });\n// --- END UPDATE ---\n\nmessages_to_send[0] = {\n    \"topic\": `NMI/Device_${device_addr}/PreAlarm`,\n    \"payload\": {\n        \"type\": \"SensorPreAlarm\",\n        \"device\": device_addr,\n        \"active_pre_alarms\": new_active_pre_alarms,\n        \"timestamp\": new Date().toISOString()\n    }\n};\n\nif (counter_increment > 0) {\n    messages_to_send[1] = { payload: counter_increment };\n}\n\nreturn messages_to_send;",
+        "outputs": 2,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1920,
+        "y": 360,
+        "wires": [
+            [
+                "a9cfba1eb866f88d",
+                "1a88575e96112ec9"
+            ],
+            [
+                "8088cf5df53b4360"
+            ]
+        ]
+    },
+    {
+        "id": "a9cfba1eb866f88d",
+        "type": "debug",
+        "z": "0aa374ead5075515",
+        "name": "PRE-ALARM",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 2210,
+        "y": 320,
+        "wires": []
+    },
+    {
+        "id": "ee08cb422252d2f5",
+        "type": "function",
+        "z": "0aa374ead5075515",
+        "name": "Decode Shunt Status (Type 15)",
+        "func": "// [REVISED] Decode Shunt Status (Type 15)]\nconst buf = msg.payload;\nconst devAddr = buf.readUInt16LE(5);\nconst point_count = buf.readUInt16LE(7);\n\nlet all_shunt_states = [];\nlet shunted_items = [];\nlet status_text = \"Shunt Status Unknown\";\nlet status_fill = \"grey\";\n\nfor (let i = 0; i < point_count; i++) {\n    const point = i + 1;\n    const byte_index = 9 + Math.floor(i * 2 / 8);\n    const bit_index = (i * 2) % 8;\n\n    if (byte_index + 2 > buf.length) break; \n\n    const word = buf.readUInt16LE(byte_index);\n    const state = (word >> bit_index) & 0x03;\n\n    const is_alarm_shunted = (state & 0x01) > 0;\n    const is_tamper_shunted = (state & 0x02) > 0;\n    \n    let description = `Point_${point}`;\n    let zone = null;\n    if (point === 1) {\n        description = \"AuxInput_1\";\n    } else if (point === 2) {\n        description = \"AuxInput_2\";\n    } else if (point >= 3) {\n        zone = point - 2;\n        description = `Zone_${zone}`;\n    }\n\n    all_shunt_states.push({ \n        point: point, \n        zone: zone, \n        description: description, \n        alarm: is_alarm_shunted, \n        tamper: is_tamper_shunted,\n        device: devAddr\n    });\n\n    if (is_alarm_shunted) {\n        shunted_items.push(description.replace(\"_\", \" \"));\n    }\n}\n\nif (shunted_items.length > 0) {\n    status_fill = \"blue\";\n    status_text = `Shunted: ` + shunted_items.join(', ');\n} else {\n    status_fill = \"green\";\n    status_text = \"Normal (All Points Un-shunted)\";\n}\n\n// --- UPDATED STATUS ---\nnode.status({ fill: status_fill, shape: \"dot\", text: `Dev ${devAddr}: ${status_text}` });\n// --- END UPDATE ---\n\nmsg.payload = {\n    \"type\": \"ShuntStatus\",\n    \"device\": devAddr, \n    \"shunted_items\": shunted_items,\n    \"all_points\": all_shunt_states\n};\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1930,
+        "y": 420,
+        "wires": [
+            [
+                "5a92ee96cc2b659f",
+                "0a0b456d35526590"
+            ]
+        ]
+    },
+    {
+        "id": "5a92ee96cc2b659f",
+        "type": "debug",
+        "z": "0aa374ead5075515",
+        "name": "SHUNT STATUS",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 2210,
+        "y": 420,
+        "wires": []
+    },
+    {
+        "id": "9cb6e7a08cbb01bc",
+        "type": "function",
+        "z": "0aa374ead5075515",
+        "name": "Decode Device Type (Type 2)",
+        "func": "// [REVISED] Decode Device Type (Type 2)\nconst buf = msg.payload;\nlet devices = [];\nlet offset = 5;\n\nwhile (offset + 10 <= buf.length) {\n    const devAddr = buf.readUInt16LE(offset);\n    const devType = buf.readUInt16LE(offset + 2);\n    const diagAlarms = buf.readUInt16LE(offset + 4);\n    const sensorAlarms = buf.readUInt16LE(offset + 6);\n    const controlPoints = buf.readUInt16LE(offset + 8);\n\n    let typeName = `Unknown (0x${devType.toString(16)})`;\n    if (devType === 0x20F) typeName = \"FlexZone-60\";\n    if (devType === 0x20B) typeName = \"FlexZone-20\";\n    if (devType === 0x20D) typeName = \"FlexZone-4\";\n\n    // Only add devices with sensor alarms\n    if (sensorAlarms > 0) {\n        devices.push({\n            address: devAddr,\n            typeName: typeName,\n            sensorAlarms: sensorAlarms,\n            controlPoints: controlPoints\n        });\n    }\n    offset += 10;\n}\n\nnode.status({ fill: \"green\", shape: \"dot\", text: `Found ${devices.length} device(s)` });\n\n// Save the list for polling\nflow.set(\"device_list\", devices);\n\n// Pass the list to the next node to trigger startup queries\nmsg.payload = devices;\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1930,
+        "y": 480,
+        "wires": [
+            [
+                "debounce_device_list"
+            ]
+        ]
+    },
+    {
+        "id": "a3a5b1cd9f3779d6",
+        "type": "debug",
+        "z": "0aa374ead5075515",
+        "name": "DEVICE INFO",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 2620,
+        "y": 500,
+        "wires": []
+    },
+    {
+        "id": "31a81e0f213bb3a8",
+        "type": "function",
+        "z": "0aa374ead5075515",
+        "name": "Decode Sensor In-Use (Type 22)",
+        "func": "const buf = msg.payload;\nconst deviceAddr = buf.readUInt16LE(5);\nconst point_count = buf.readUInt16LE(7);\n\nlet in_use_points = [];\n\nfor (let i = 0; i < point_count; i++) {\n    const point = i + 1;\n    const byte_index = 9 + Math.floor(i * 4 / 8); \n    const bit_index = (i * 4) % 8;\n    \n    if (byte_index + 1 > buf.length) break; \n\n    let nibble;\n    if (bit_index === 0) { \n        nibble = buf[byte_index] & 0x0F;\n    } else { \n        nibble = (buf[byte_index] >> 4) & 0x0F;\n    }\n    \n    const is_in_use = (nibble >> 3) & 0x01;\n    \n    if (is_in_use) {\n        let zone = null;\n        let description = `Point_${point}`;\n        if (point === 1) {\n            description = \"AuxInput_1\";\n        } else if (point === 2) {\n            description = \"AuxInput_2\";\n        } else if (point >= 3) {\n            zone = point - 2;\n            description = `Zone_${zone}`;\n        }\n        \n        in_use_points.push({\n            point: point,\n            zone: zone,\n            description: description,\n            alarm_supported: (nibble & 0x01) > 0,\n            tamper_supported: (nibble & 0x02) > 0,\n            prealarm_supported: (nibble & 0x04) > 0\n        });\n    }\n}\n\nnode.status({fill:\"green\", shape:\"dot\", text:`Dev ${deviceAddr}: ${in_use_points.length} points in use`});\nmsg.payload = {\n    type: \"SensorInUse\",\n    device: deviceAddr,\n    in_use_count: in_use_points.length,\n    in_use_points: in_use_points\n};\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1940,
+        "y": 540,
+        "wires": [
+            [
+                "42f2c5d0ba499c3a",
+                "206ffd881fac9311"
+            ]
+        ]
+    },
+    {
+        "id": "42f2c5d0ba499c3a",
+        "type": "debug",
+        "z": "0aa374ead5075515",
+        "name": "IN-USE POINTS",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 2200,
+        "y": 540,
+        "wires": []
+    },
+    {
+        "id": "ebdb5f0a290ba7a8",
+        "type": "link in",
+        "z": "0aa374ead5075515",
+        "name": "link in (Zone List)",
+        "links": [
+            "326791daea6374a1",
+            "1a88575e96112ec9",
+            "0a0b456d35526590",
+            "206ffd881fac9311"
+        ],
+        "x": 105,
+        "y": 760,
+        "wires": [
+            [
+                "2ba4a098e4c797c7"
+            ]
+        ]
+    },
+    {
+        "id": "326791daea6374a1",
+        "type": "link out",
+        "z": "0aa374ead5075515",
+        "name": "link out (zone list)",
+        "mode": "link",
+        "links": [
+            "ebdb5f0a290ba7a8"
+        ],
+        "x": 2095,
+        "y": 260,
+        "wires": []
+    },
+    {
+        "id": "1a88575e96112ec9",
+        "type": "link out",
+        "z": "0aa374ead5075515",
+        "name": "link out (zone list)",
+        "mode": "link",
+        "links": [
+            "ebdb5f0a290ba7a8"
+        ],
+        "x": 2155,
+        "y": 360,
+        "wires": []
+    },
+    {
+        "id": "0a0b456d35526590",
+        "type": "link out",
+        "z": "0aa374ead5075515",
+        "name": "link out (zone list)",
+        "mode": "link",
+        "links": [
+            "ebdb5f0a290ba7a8"
+        ],
+        "x": 2095,
+        "y": 440,
+        "wires": []
+    },
+    {
+        "id": "206ffd881fac9311",
+        "type": "link out",
+        "z": "0aa374ead5075515",
+        "name": "link out (zone list)",
+        "mode": "link",
+        "links": [
+            "ebdb5f0a290ba7a8"
+        ],
+        "x": 2815,
+        "y": 760,
+        "wires": []
+    },
+    {
+        "id": "c70798fcfed62117",
+        "type": "debug",
+        "z": "0aa374ead5075515",
+        "name": "RAW from TCP",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1320,
+        "y": 300,
+        "wires": []
+    },
+    {
+        "id": "ab3b836fe8ad0b59",
+        "type": "function",
+        "z": "0aa374ead5075515",
+        "name": "Decode Comm Stat (Type 3)",
+        "func": "// [REVISED] Decode Comm Stat (Type 3)\nconst buf = msg.payload;\nconst device_addr = buf.readUInt16LE(5);\nconst is_connected = buf[7] > 0;\nconst status_byte = buf[8];\n\nconst side_a_fault = (status_byte & 0x01) > 0;\nconst side_b_fault = (status_byte & 0x02) > 0;\n\nlet status_text = \"Comm OK\";\nlet status_fill = \"green\";\n\nif (!is_connected) {\n    status_text = \"COMM FAIL\";\n    status_fill = \"red\";\n} else if (side_a_fault || side_b_fault) {\n    status_text = \"Side Fault\";\n    status_fill = \"yellow\";\n}\n\n// --- UPDATED STATUS ---\nnode.status({ fill: status_fill, shape: \"dot\", text: `Dev ${device_addr}: ${status_text}` });\n// --- END UPDATE ---\n\nmsg.payload = {\n    \"type\": \"CommStatus\",\n    \"device\": device_addr,\n    \"comm_fail\": !is_connected,\n    \"side_a_fault\": side_a_fault,\n    \"side_b_fault\": side_b_fault\n};\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1920,
+        "y": 600,
+        "wires": [
+            [
+                "5ecbed25876556ed",
+                "c9a8f7b2e1d0c6a5"
+            ]
+        ]
+    },
+    {
+        "id": "5ecbed25876556ed",
+        "type": "debug",
+        "z": "0aa374ead5075515",
+        "name": "COMM STATUS",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 2200,
+        "y": 600,
+        "wires": []
+    },
+    {
+        "id": "926c9a6748277f7b",
+        "type": "function",
+        "z": "0aa374ead5075515",
+        "name": "Decode Diag Alarm (Type 4)",
+        "func": "// [REVISED] Decode Diag Alarm (Type 4)\nconst diagMap = {\n    1: \"EnclosureTamper\", 2: \"ProgramFlashError\", 3: \"RAMError\",\n    4: \"ProcessorBootFail\", 5: \"8VRailFault\", 6: \"3VRailFault\",\n    7: \"1V8RailFault\", 8: \"1V2RailFault\", 9: \"InputPowerFail\",\n    10: \"SideAPowerFault\", 11: \"SideBPowerFault\", 12: \"SideASupervision\",\n    13: \"SideBSupervision\", 14: \"SideAInterference\", 15: \"SideBInterference\",\n    16: \"ProcessorOffline\", 17: \"GsmRcvrFault\", 18: \"GsmRcvrInterference\",\n    19: \"Gsm1_CommFail\", 20: \"Gsm1_EnclosureTamper\", 21: \"Gsm1_ProgramFlashError\",\n    22: \"Gsm1_I2CBusFault\", 23: \"GGsm1_2V7RailFault\", 24: \"Gsm1_LowPower\",\n    43: \"OptionCardFail\"\n};\n\nconst buf = msg.payload;\nconst devAddr = buf.readUInt16LE(5);\nconst point = buf.readUInt16LE(7);\nconst active = buf[9] > 0;\n\nconst name = diagMap[point] || `DiagPoint_${point}`;\n\n// --- UPDATED STATUS ---\nnode.status({\n    fill: active ? \"red\" : \"green\",\n    shape: \"dot\",\n    text: `Dev ${devAddr}: ${name}: ${active ? 'ACTIVE' : 'Inactive'}`\n});\n// --- END UPDATE ---\n\nmsg.payload = {\n    type: \"DiagAlarm\",\n    device: devAddr,\n    point: point,\n    name: name,\n    active: active\n};\nmsg.topic = `NMI/Device_${devAddr}/Diag/${name}`;\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1920,
+        "y": 660,
+        "wires": [
+            [
+                "580a96e1e5a5a582",
+                "c9a8f7b2e1d0c6a5"
+            ]
+        ]
+    },
+    {
+        "id": "580a96e1e5a5a582",
+        "type": "debug",
+        "z": "0aa374ead5075515",
+        "name": "DIAG ALARM",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 2200,
+        "y": 660,
+        "wires": []
+    },
+    {
+        "id": "5a57bfb28572b4a4",
+        "type": "function",
+        "z": "0aa374ead5075515",
+        "name": "Decode Control Status (Type 8)",
+        "func": "// [REVISED] Decode Control Status (Type 8)\nconst outputMap = {\n    1: \"Relay_1\", 2: \"Relay_2\", 3: \"Relay_3\", 4: \"Relay_4\",\n    5: \"OptRelay_1\", 6: \"OptRelay_2\", 7: \"OptRelay_3\", 8: \"OptRelay_4\"\n};\n\nconst buf = msg.payload;\nconst devAddr = buf.readUInt16LE(5);\nconst point = buf.readUInt16LE(7);\nconst active = buf[9] > 0;\n\nconst name = outputMap[point] || `Output_${point}`;\n\n// --- UPDATED STATUS ---\nnode.status({\n    fill: active ? \"yellow\" : \"grey\", \n    shape: \"dot\", \n    text: `Dev ${devAddr}: ${name}: ${active ? 'Active' : 'Inactive'}`\n});\n// --- END UPDATE ---\n\nmsg.payload = {\n    type: \"ControlStatus\",\n    device: devAddr,\n    point: point,\n    name: name,\n    active: active\n};\nmsg.topic = `NMI/Device_${devAddr}/Output/${name}`;\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1930,
+        "y": 720,
+        "wires": [
+            [
+                "ea46a718983f3a74",
+                "c9a8f7b2e1d0c6a5"
+            ]
+        ]
+    },
+    {
+        "id": "ea46a718983f3a74",
+        "type": "debug",
+        "z": "0aa374ead5075515",
+        "name": "CONTROL STATUS",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 2220,
+        "y": 720,
+        "wires": []
+    },
+    {
+        "id": "2f0ee23ffbfcf366",
+        "type": "function",
+        "z": "0aa374ead5075515",
+        "name": "Decode Device Summary (Type 19)",
+        "func": "// [REVISED] Decode Device Summary (Type 19)\nconst buf = msg.payload;\nconst devAddr = buf.readUInt16LE(5);\nconst statusByte = buf[7];\n\nlet statusUpdates = [];\nstatusUpdates.push({\n    name: \"Summary_CommFail_Mismatch\", // Bit 0\n    active: (statusByte & 0x01) > 0\n});\nstatusUpdates.push({\n    name: \"Summary_CommSideFault\",     // Bit 1\n    active: (statusByte & 0x02) > 0\n});\nstatusUpdates.push({\n    name: \"Summary_CriticalDiag\",      // Bit 2\n    active: (statusByte & 0x04) > 0\n});\nstatusUpdates.push({\n    name: \"Summary_WarningDiag\",       // Bit 3\n    active: (statusByte & 0x08) > 0\n});\nstatusUpdates.push({\n    name: \"Summary_EnclosureTamper\",   // Bit 4\n    active: (statusByte & 0x10) > 0\n});\n\n// --- UPDATED STATUS ---\nnode.status({ fill: \"blue\", shape: \"dot\", text: `Dev ${devAddr} Summary: 0x${statusByte.toString(16)}` });\n// --- END UPDATE ---\n\nmsg.payload = {\n    type: \"DiagAlarmList\",\n    device: devAddr,\n    statuses: statusUpdates\n};\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1940,
+        "y": 780,
+        "wires": [
+            [
+                "c9a8f7b2e1d0c6a5",
+                "580a23041fe0bcf3"
+            ]
+        ]
+    },
+    {
+        "id": "580a23041fe0bcf3",
+        "type": "debug",
+        "z": "0aa374ead5075515",
+        "name": "SUMMARY (Parsed)",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 2220,
+        "y": 780,
+        "wires": []
+    },
+    {
+        "id": "57d1839e6872f485",
+        "type": "function",
+        "z": "0aa374ead5075515",
+        "name": "Split Zones and Inputs",
+        "func": "// [REVISED] Split Zones and Inputs\n// Now splits based on the new description format\n\nconst allItems = msg.payload;\nlet zones = [];\nlet inputs = [];\n\nfor (const item of allItems) {\n    if (item.description.includes(\"Zone\")) {\n        zones.push(item);\n    } else {\n        inputs.push(item);\n    }\n}\n\nreturn [{ payload: zones }, { payload: inputs }];",
+        "outputs": 2,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 700,
+        "y": 760,
+        "wires": [
+            [
+                "2c41eb0a30f4eeab",
+                "6e26454e9e904e5e"
+            ],
+            [
+                "147090de51f8a994"
+            ]
+        ]
+    },
+    {
+        "id": "a8ac0a595c37a869",
+        "type": "function",
+        "z": "0aa374ead5075515",
+        "name": "Prep Diags for Table",
+        "func": "// [REVISED] Prep Diags for Table\n// This node now reads the state from msg.payload first,\n// and defaults to 'true' (Show Active Only) to match the switch.\n\nlet show_only_active;\n\n// Check if a state was passed in from the switch\nif (typeof msg.payload === 'boolean') {\n    // This message came from the switch. Use its payload directly.\n    show_only_active = msg.payload;\n} else {\n    // This message came from a data update. Read from flow context.\n    show_only_active = flow.get(\"diag_show_only_active\");\n    // And if it's still not set (on startup), apply the default\n    if (show_only_active === undefined) {\n        show_only_active = true; // <--- THIS IS THE FIX\n    }\n}\n\nconst all_diag_status = flow.get(\"node_1_diags\") || {};\nlet table = [];\n\nconst colors = {\n    active: \"#ff4d4d\",\n    inactive: \"#00802b\"\n};\n\n// Loop 1: Iterate over each device ID (e.g., \"1\", \"2\")\nfor (const device_id in all_diag_status) {\n    const device_diags = all_diag_status[device_id];\n\n    // Loop 2: Iterate over the alarms for that device\n    for (const key in device_diags) {\n        // Only show keys that do NOT start with \"Summary_\"\n        if (device_diags.hasOwnProperty(key) && !key.startsWith(\"Summary_\") && !key.startsWith(\"DiagPoint_\")) {\n            const active = device_diags[key];\n\n            // --- THIS IS THE FILTER LOGIC ---\n            if (!show_only_active || (show_only_active && active === true)) {\n                table.push({\n                    device: `Device ${device_id}`,\n                    description: key.replace(/([A-Z])/g, ' $1').trim(),\n                    status: active ? \"<b>Active</b>\" : \"Secure\",\n                    led: `<font color=\\\"${active ? colors.active : colors.inactive}\\\" style=\\\"font-size: 1.5em; line-height: 1;\\\">⬤</font>`\n                });\n            }\n        }\n    }\n}\n\n// Sort the table by device, then by description\ntable.sort((a, b) => {\n    if (a.device < b.device) return -1;\n    if (a.device > b.device) return 1;\n    return a.description.localeCompare(b.description);\n});\n\nmsg.payload = table;\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 840,
+        "y": 980,
+        "wires": [
+            [
+                "f4fdb90a74a706ec"
+            ]
+        ]
+    },
+    {
+        "id": "f4fdb90a74a706ec",
+        "type": "ui-table",
+        "z": "0aa374ead5075515",
+        "group": "23adae81c9ee17d6",
+        "name": "Diag Status Table",
+        "label": "",
+        "order": 2,
+        "width": "",
+        "height": "",
+        "maxrows": "",
+        "passthru": false,
+        "autocols": false,
+        "showSearch": false,
+        "deselect": true,
+        "selectionType": "none",
+        "columns": [
+            {
+                "title": "",
+                "key": "led",
+                "keyType": "key",
+                "type": "html",
+                "width": "5%",
+                "align": "start"
+            },
+            {
+                "title": "Diagnostic",
+                "key": "description",
+                "keyType": "key",
+                "type": "html",
+                "width": "30%",
+                "align": "start"
+            },
+            {
+                "title": "Device",
+                "key": "device",
+                "keyType": "key",
+                "type": "html",
+                "width": "15%",
+                "align": "start"
+            },
+            {
+                "title": "Status",
+                "key": "status",
+                "keyType": "key",
+                "type": "html",
+                "width": "20%",
+                "align": "start"
+            }
+        ],
+        "mobileBreakpoint": "sm",
+        "mobileBreakpointType": "defaults",
+        "action": "replace",
+        "className": "",
+        "x": 1090,
+        "y": 980,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "0bc269ce671cad54",
+        "type": "function",
+        "z": "0aa374ead5075515",
+        "name": "Build Shunt Message (Type 14)",
+        "func": "// [REVISED] Build Shunt Message (Type 14)\n// This now uses the device ID from msg.payload\n// OUPUT 1: The Shunt command (Type 14)\n// OUPUT 2: A new Shunt Status Query (Type 15)\n\nconst point = msg.payload.point;\nconst shunt_state = msg.payload.shunt;\nconst device = msg.payload.device || 1;\n\nconst uMask = 0x01;\nconst uState = shunt_state ? 0x01 : 0x00;\n\n// --- Output 1: Shunt Command (Type 14) ---\nconst bufferCmd = Buffer.alloc(11);\nbufferCmd[0] = 0xE0;\nbufferCmd[1] = 0x31;\nbufferCmd.writeUInt16LE(7, 2); // Message length\nbufferCmd[4] = 0x0E; // NM_MT_SHUNT\nbufferCmd.writeUInt16LE(device, 5); // Use the device ID\nbufferCmd.writeUInt16LE(point, 7); // Use the point number\nbufferCmd[9] = uMask;\nbufferCmd[10] = uState;\n\nif (shunt_state) {\n    node.status({ fill: \"blue\", shape: \"dot\", text: `Shunting: Dev ${device}, Point ${point}` });\n} else {\n    node.status({ fill: \"grey\", shape: \"dot\", text: `Un-shunting: Dev ${device}, Point ${point}` });\n}\n\n// --- Output 2: Shunt Query (Type 15) ---\n// We add a 250ms delay to give the NM time to process the command\n// before we ask it for the new status.\nconst bufferQuery = Buffer.alloc(7);\nbufferQuery[0] = 0xE0;\nbufferQuery[1] = 0x31;\nbufferQuery.writeUInt16LE(3, 2); // Data Length\nbufferQuery[4] = 0x0F; // NM_MT_SHUNTS\nbufferQuery.writeUInt16LE(device, 5);\n\n\nreturn [\n    { payload: bufferCmd },\n    { payload: bufferQuery, \"delay\": 250 } // Send the query 250ms later\n];",
+        "outputs": 2,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 450,
+        "y": 320,
+        "wires": [
+            [
+                "QUERY_RATE_LIMITER"
+            ],
+            [
+                "QUERY_RATE_LIMITER"
+            ]
+        ]
+    },
+    {
+        "id": "3e908003a176e19a",
+        "type": "link out",
+        "z": "0aa374ead5075515",
+        "name": "link out (Zone Click)",
+        "mode": "link",
+        "links": [
+            "3fe4e9c23d1c203e"
+        ],
+        "x": 1315,
+        "y": 700,
+        "wires": []
+    },
+    {
+        "id": "3fe4e9c23d1c203e",
+        "type": "link in",
+        "z": "0aa374ead5075515",
+        "name": "link in (Zone Click)",
+        "links": [
+            "3e908003a176e19a"
+        ],
+        "x": 45,
+        "y": 320,
+        "wires": [
+            [
+                "4c08e990e1c8eef4"
+            ]
+        ]
+    },
+    {
+        "id": "147090de51f8a994",
+        "type": "ui-table",
+        "z": "0aa374ead5075515",
+        "group": "b42441311b59a431",
+        "name": "Input Status Table",
+        "label": "",
+        "order": 1,
+        "width": "0",
+        "height": "0",
+        "maxrows": "",
+        "passthru": true,
+        "autocols": false,
+        "showSearch": false,
+        "deselect": true,
+        "selectionType": "none",
+        "columns": [
+            {
+                "title": "",
+                "key": "led",
+                "keyType": "key",
+                "type": "html",
+                "width": "5%",
+                "align": "start"
+            },
+            {
+                "title": "Description",
+                "key": "description",
+                "keyType": "key",
+                "type": "html",
+                "width": "40%",
+                "align": "start"
+            },
+            {
+                "title": "Status",
+                "key": "status",
+                "keyType": "key",
+                "type": "html",
+                "width": "20%",
+                "align": "start"
+            },
+            {
+                "title": "",
+                "key": "mak_button",
+                "keyType": "key",
+                "type": "html",
+                "width": "",
+                "align": "start"
+            }
+        ],
+        "mobileBreakpoint": "sm",
+        "mobileBreakpointType": "defaults",
+        "action": "replace",
+        "className": "",
+        "x": 950,
+        "y": 780,
+        "wires": [
+            [
+                "SWITCH_INPUT_TABLE"
+            ]
+        ]
+    },
+    {
+        "id": "2c41eb0a30f4eeab",
+        "type": "ui-table",
+        "z": "0aa374ead5075515",
+        "group": "f74f07dc6ececdfd",
+        "name": "Zone Status Table",
+        "label": "",
+        "order": 1,
+        "width": "0",
+        "height": "0",
+        "maxrows": "",
+        "passthru": true,
+        "autocols": false,
+        "showSearch": false,
+        "deselect": true,
+        "selectionType": "click",
+        "columns": [
+            {
+                "title": "",
+                "key": "led",
+                "keyType": "key",
+                "type": "html",
+                "width": "6%",
+                "align": "start"
+            },
+            {
+                "title": "Description",
+                "key": "description",
+                "keyType": "key",
+                "type": "html",
+                "width": "30%",
+                "align": "start"
+            },
+            {
+                "title": "Status",
+                "key": "status",
+                "keyType": "key",
+                "type": "html",
+                "width": "32%",
+                "align": "start"
+            },
+            {
+                "title": "Action",
+                "key": "mask_button",
+                "keyType": "key",
+                "type": "html",
+                "width": "36%",
+                "align": "start"
+            }
+        ],
+        "mobileBreakpoint": "sm",
+        "mobileBreakpointType": "defaults",
+        "action": "replace",
+        "className": "",
+        "x": 950,
+        "y": 740,
+        "wires": [
+            [
+                "3e908003a176e19a"
+            ]
+        ]
+    },
+    {
+        "id": "1fffb4581750cda6",
+        "type": "ui-table",
+        "z": "0aa374ead5075515",
+        "group": "1070cd7c96b6af5e",
+        "name": "Output Status Table",
+        "label": "Outputs",
+        "order": 1,
+        "width": "0",
+        "height": "0",
+        "maxrows": "",
+        "passthru": true,
+        "autocols": false,
+        "showSearch": false,
+        "deselect": true,
+        "selectionType": "none",
+        "columns": [
+            {
+                "title": "",
+                "key": "led",
+                "keyType": "key",
+                "type": "html",
+                "width": "10%",
+                "align": "center"
+            },
+            {
+                "title": "Description",
+                "key": "description",
+                "keyType": "key",
+                "type": "html",
+                "width": "40%",
+                "align": "start"
+            },
+            {
+                "title": "Status",
+                "key": "status",
+                "keyType": "key",
+                "type": "html",
+                "width": "30%",
+                "align": "start"
+            },
+            {
+                "title": "Action",
+                "key": "action_button",
+                "keyType": "key",
+                "type": "html",
+                "width": "20%",
+                "align": "center"
+            }
+        ],
+        "mobileBreakpoint": "sm",
+        "mobileBreakpointType": "defaults",
+        "action": "replace",
+        "className": "",
+        "x": 1090,
+        "y": 940,
+        "wires": [
+            [
+                "cc2fda239774dbfd"
+            ]
+        ]
+    },
+    {
+        "id": "cc2fda239774dbfd",
+        "type": "link out",
+        "z": "0aa374ead5075515",
+        "name": "link out (Output Click)",
+        "mode": "link",
+        "links": [
+            "644105bb5a9bee54"
+        ],
+        "x": 1235,
+        "y": 920,
+        "wires": []
+    },
+    {
+        "id": "644105bb5a9bee54",
+        "type": "link in",
+        "z": "0aa374ead5075515",
+        "name": "link in (Output Click)",
+        "links": [
+            "cc2fda239774dbfd"
+        ],
+        "x": 45,
+        "y": 260,
+        "wires": [
+            [
+                "24cc7f63274a25be"
+            ]
+        ]
+    },
+    {
+        "id": "00fe39d1b79e347c",
+        "type": "switch",
+        "z": "0aa374ead5075515",
+        "name": "Route NMI Message",
+        "property": "payload[4]",
+        "propertyType": "msg",
+        "rules": [
+            {
+                "t": "eq",
+                "v": "16",
+                "vt": "num"
+            },
+            {
+                "t": "eq",
+                "v": "6",
+                "vt": "num"
+            },
+            {
+                "t": "eq",
+                "v": "1",
+                "vt": "num"
+            },
+            {
+                "t": "eq",
+                "v": "21",
+                "vt": "num"
+            },
+            {
+                "t": "eq",
+                "v": "15",
+                "vt": "num"
+            },
+            {
+                "t": "eq",
+                "v": "2",
+                "vt": "num"
+            },
+            {
+                "t": "eq",
+                "v": "22",
+                "vt": "num"
+            },
+            {
+                "t": "eq",
+                "v": "3",
+                "vt": "num"
+            },
+            {
+                "t": "eq",
+                "v": "4",
+                "vt": "num"
+            },
+            {
+                "t": "eq",
+                "v": "8",
+                "vt": "num"
+            },
+            {
+                "t": "eq",
+                "v": "19",
+                "vt": "num"
+            },
+            {
+                "t": "eq",
+                "v": "9",
+                "vt": "num"
+            },
+            {
+                "t": "eq",
+                "v": "5",
+                "vt": "num"
+            },
+            {
+                "t": "eq",
+                "v": "25",
+                "vt": "num"
+            },
+            {
+                "t": "eq",
+                "v": "17",
+                "vt": "num"
+            },
+            {
+                "t": "eq",
+                "v": "7",
+                "vt": "num"
+            },
+            {
+                "t": "eq",
+                "v": "26",
+                "vt": "num"
+            }
+        ],
+        "checkall": "true",
+        "repair": true,
+        "outputs": 17,
+        "x": 1580,
+        "y": 340,
+        "wires": [
+            [
+                "cf2e4bb26156a831"
+            ],
+            [
+                "cf2e4bb26156a831"
+            ],
+            [
+                "3629d8f7646be6ee"
+            ],
+            [
+                "3bbe9f911cfb9234"
+            ],
+            [
+                "ee08cb422252d2f5"
+            ],
+            [
+                "9cb6e7a08cbb01bc"
+            ],
+            [
+                "31a81e0f213bb3a8"
+            ],
+            [
+                "ab3b836fe8ad0b59"
+            ],
+            [
+                "926c9a6748277f7b"
+            ],
+            [
+                "5a57bfb28572b4a4"
+            ],
+            [
+                "2f0ee23ffbfcf366"
+            ],
+            [
+                "06bf1e314d2a707f"
+            ],
+            [
+                "a5f8b73b2b4f6446"
+            ],
+            [
+                "1e2945f22208b103"
+            ],
+            [
+                "46778c0247998b59"
+            ],
+            [
+                "46778c0247998b59"
+            ],
+            [
+                "decode-range-alarms"
+            ]
+        ]
+    },
+    {
+        "id": "06bf1e314d2a707f",
+        "type": "function",
+        "z": "0aa374ead5075515",
+        "name": "Decode Controls (Type 9)",
+        "func": "// [REVISED] Decode Controls (Type 9)\nconst outputMap = {\n    1: \"Relay_1\", 2: \"Relay_2\", 3: \"Relay_3\", 4: \"Relay_4\",\n    5: \"OptRelay_1\", 6: \"OptRelay_2\", 7: \"OptRelay_3\", 8: \"OptRelay_4\"\n};\n\nconst buf = msg.payload;\nconst devAddr = buf.readUInt16LE(5);\nconst point_count = buf.readUInt16LE(7);\n\nlet all_output_statuses = [];\n\nfor (let i = 0; i < point_count; i++) {\n    const point = i + 1;\n    const byte_index = 9 + Math.floor(i / 8);\n    const bit_index = i % 8;\n\n    if (byte_index >= buf.length) break;\n\n    const byte = buf[byte_index];\n    const active = (byte >> bit_index) & 0x01;\n\n    const name = outputMap[point] || `Output_${point}`;\n\n    all_output_statuses.push({\n        type: \"ControlStatus\",\n        device: devAddr,\n        point: point,\n        name: name,\n        active: active > 0\n    });\n}\n\n// --- UPDATED STATUS ---\nnode.status(`Dev ${devAddr}: Full control status for ${point_count} points`);\n// --- END UPDATE ---\n\nmsg.payload = {\n    type: \"ControlStatusList\",\n    device: devAddr,\n    statuses: all_output_statuses\n};\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1910,
+        "y": 840,
+        "wires": [
+            [
+                "ca34f4a2f3fda8ba",
+                "c9a8f7b2e1d0c6a5"
+            ]
+        ]
+    },
+    {
+        "id": "8ebc7c2aea32e08f",
+        "type": "function",
+        "z": "0aa374ead5075515",
+        "name": "Prep Outputs for Table",
+        "func": "// [REVISED] Prep Outputs for Table\n// This node now reads the compound key and adds device/point to the row\n\nconst outputs = flow.get(\"node_1_outputs\");\nlet table = [];\n\nconst colors = {\n    active: \"#00802b\",\n    inactive: \"#808080\"\n};\n\nconst button_style = \"padding: 4px 10px; border-radius: 4px; color: white; width: 100%; box-sizing: border-box; text-align: center; font-size: 0.9em; cursor: pointer;\";\n\n// This map is still needed to get the point number from the name\nconst outputMap = {\n    \"Relay_1\": 1,\n    \"Relay_2\": 2,\n    \"Relay_3\": 3,\n    \"Relay_4\": 4,\n    \"OptRelay_1\": 5,\n    \"OptRelay_2\": 6,\n    \"OptRelay_3\": 7,\n    \"OptRelay_4\": 8\n};\n\nfor (const key in outputs) {\n    if (outputs.hasOwnProperty(key)) {\n        const active = outputs[key];\n        \n        // Split the compound key \"device:name\"\n        const [device_id, name] = key.split(':');\n        const point_num = outputMap[name] || parseInt(name.split('_')[1]) || 0;\n\n        table.push({\n            description: `Dev ${device_id} - ${name.replace(\"_\", \" \")}`,\n            status: active ? \"Active\" : \"Inactive\",\n            led: `<font color=\\\"${active ? colors.active : colors.inactive}\\\" style=\\\"font-size: 1.5em; line-height: 1;\\\">⬤</font>`,\n            _point: point_num,\n            _device: parseInt(device_id), // Add device ID to row\n            _status: active ? \"active\" : \"inactive\",\n            action_button: active ? `<div style=\\\"${button_style} background-color: ${colors.active};\\\">Deactivate</div>` : `<div style=\\\"${button_style} background-color: ${colors.inactive};\\\">Activate</div>`\n        });\n    }\n}\n\n// Sort the table by device, then point\ntable.sort((a, b) => {\n    if (a._device < b._device) return -1;\n    if (a._device > b._device) return 1;\n    return a._point - b._point;\n});\n\nmsg.payload = table;\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 840,
+        "y": 920,
+        "wires": [
+            [
+                "1fffb4581750cda6",
+                "1005881de85f1364"
+            ]
+        ]
+    },
+    {
+        "id": "24cc7f63274a25be",
+        "type": "function",
+        "z": "0aa374ead5075515",
+        "name": "Toggle Output on Click",
+        "func": "// [REVISED] Toggle Output on Click\n// This now reads the _device and _point from the clicked row\n\nconst output = msg.payload;\nconst currentState = output._status;\nconst point = output._point;\nconst device = output._device; // Get the device ID\n\nif (!point || !device) {\n    node.warn(\"Clicked on output with missing point or device number: \" + output.description);\n    return null;\n}\n\nlet newState = (currentState === \"active\") ? false : true;\n\nmsg.payload = {\n    point: point,\n    device: device, // Pass the device ID\n    active: newState\n};\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 180,
+        "y": 260,
+        "wires": [
+            [
+                "e52d04ae583be041"
+            ]
+        ]
+    },
+    {
+        "id": "4c08e990e1c8eef4",
+        "type": "function",
+        "z": "0aa374ead5075515",
+        "name": "Toggle Shunt on Click",
+        "func": "// [REVISED] Toggle Shunt on Click\n// The payload is the row data object 'item', which now includes the device ID\n\nconst status = msg.payload._status;\nconst point = msg.payload._point;\nconst device = msg.payload.device; // Get the device ID from the row\n\nif (!device) {\n    node.warn(\"No device ID found in clicked row. Shunt command will fail.\");\n    return null;\n}\n\nif (status === \"secure\") {\n    // It's secure, let's shunt it\n    msg.payload = { shunt: true, point: point, device: device };\n    return msg;\n} else if (status === \"shunted\" || status === \"masked\") {\n    // It's shunted, let's un-shunt it\n    msg.payload = { shunt: false, point: point, device: device };\n    return msg;\n}\n\n// If it's in alarm, pre-alarm, or unknown, do nothing\nreturn null;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 180,
+        "y": 320,
+        "wires": [
+            [
+                "0bc269ce671cad54"
+            ]
+        ]
+    },
+    {
+        "id": "101e802b63c44163",
+        "type": "function",
+        "z": "0aa374ead5075515",
+        "name": "Update Status Variables",
+        "func": "// [REVISED] Update Status Variables\n// This node now uses a nested object for diagnostics: { \"deviceID\": { \"diagName\": state } }\n\nconst p = msg.payload;\nlet status = flow.get(\"node_1_diags\") || {};\nlet outputs = flow.get(\"node_1_outputs\") || {};\n\nfor (const msg_payload of p) {\n    const devAddr = msg_payload.device; // Get the device ID\n\n    // Ensure a sub-object exists for this device\n    if (devAddr && !status[devAddr]) {\n        status[devAddr] = {};\n    }\n\n    if (msg_payload.type === \"CommStatus\") {\n        status[devAddr].CommFail = msg_payload.comm_fail;\n        status[devAddr].SideAFault = msg_payload.side_a_fault;\n        status[devAddr].SideBFault = msg_payload.side_b_fault;\n\n    } else if (msg_payload.type === \"DiagAlarm\") {\n        status[devAddr][msg_payload.name] = msg_payload.active;\n\n    } else if (msg_payload.type === \"DiagAlarmList\") {\n        // This handles both \"DiagAlarmList\" (Type 5) and \"DiagAlarmList\" (Type 19)\n        for (const update of msg_payload.statuses) {\n            status[devAddr][update.name] = update.active;\n        }\n\n        // --- THIS IS THE FIXED BLOCK ---\n    } else if (msg_payload.type === \"ControlInUse\") {\n        // Get the device ID from the parent message\n        const deviceId = msg_payload.device;\n        for (const control of msg_payload.in_use_controls) {\n            // Build the key using the parent's deviceId\n            let key = `${deviceId}:${control.name}`;\n            if (outputs[key] === undefined) {\n                outputs[key] = false;\n            }\n        }\n        // --- END OF FIX ---\n\n    } else if (msg_payload.type === \"ControlStatusList\") {\n        for (const s of msg_payload.statuses) {\n            let key = `${s.device}:${s.name}`;\n            if (outputs.hasOwnProperty(key)) {\n                outputs[key] = s.active;\n            }\n        }\n    } else if (msg_payload.type === \"ControlStatus\") {\n        let key = `${msg_payload.device}:${msg_payload.name}`;\n        if (outputs.hasOwnProperty(key)) {\n            outputs[key] = msg_payload.active;\n        }\n    }\n}\n\n// SET (once)\nflow.set(\"node_1_diags\", status);\nflow.set(\"node_1_outputs\", outputs);\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "// [REVISED] On Initialize\n// Set an empty object. The state will be built as messages arrive.\nflow.set(\"node_1_diags\", {});\n\n// These are still correct\nflow.set(\"zones\", {});\nflow.set(\"node_1_outputs\", {});",
+        "finalize": "",
+        "libs": [],
+        "x": 270,
+        "y": 920,
+        "wires": [
+            [
+                "55486f6cc9a3b0f6"
+            ]
+        ]
+    },
+    {
+        "id": "e52d04ae583be041",
+        "type": "function",
+        "z": "0aa374ead5075515",
+        "name": "Build Control Message (Type 8)",
+        "func": "// [REVISED] Build Control Message (Type 8)\n// This now uses the device ID from msg.payload\n\nconst point = msg.payload.point;\nconst active = msg.payload.active;\nconst device = msg.payload.device; // Get the device ID\n\nconst buffer = Buffer.alloc(10);\nbuffer[0] = 0xE0;\nbuffer[1] = 0x31;\nbuffer.writeUInt16LE(6, 2); // Message length\nbuffer[4] = 0x08; // NM_MT_CONTROL\n\nbuffer.writeUInt16LE(device, 5); // Use the device ID\nbuffer.writeUInt16LE(point, 7); // Use the point number\n\nbuffer[9] = active ? 0x01 : 0x00; \n\nnode.status({\n    fill: active ? \"green\" : \"grey\",\n    shape: \"dot\",\n    text: `Setting Dev ${device} Point ${point} to ${active ? 'Active' : 'Inactive'}`\n});\n\nmsg.payload = buffer;\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 450,
+        "y": 260,
+        "wires": [
+            [
+                "QUERY_RATE_LIMITER"
+            ]
+        ]
+    },
+    {
+        "id": "6abfb8fe1c113676",
+        "type": "inject",
+        "z": "0aa374ead5075515",
+        "name": "Startup",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "0.2",
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 220,
+        "y": 440,
+        "wires": [
+            [
+                "1ba5e367b45514fd"
+            ]
+        ]
+    },
+    {
+        "id": "1ba5e367b45514fd",
+        "type": "function",
+        "z": "0aa374ead5075515",
+        "name": "Consolidated Startup Queries",
+        "func": "// [REVISED] Consolidated Startup Queries\n// Sends only the device discovery message.\n// The response to this will trigger all other queries.\n\nconst buffer = Buffer.alloc(7);\nbuffer[0] = 0xE0;\nbuffer[1] = 0x31;\nbuffer.writeUInt16LE(3, 2); // Data Length\nbuffer[4] = 0x02; // NM_MT_DEVC_TYPE\nbuffer.writeUInt16LE(0xFFFF, 5); // 0xFFFF = All Devices\nmsg.payload = buffer;\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 450,
+        "y": 440,
+        "wires": [
+            [
+                "QUERY_RATE_LIMITER"
+            ]
+        ]
+    },
+    {
+        "id": "0b46c0c212d946e5",
+        "type": "inject",
+        "z": "0aa374ead5075515",
+        "name": "Poll tick 10s",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "10",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "3",
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 210,
+        "y": 380,
+        "wires": [
+            [
+                "eee45f1b424302c0"
+            ]
+        ]
+    },
+    {
+        "id": "eee45f1b424302c0",
+        "type": "function",
+        "z": "0aa374ead5075515",
+        "name": "Consolidated Polling",
+        "func": "// [REVISED] Consolidated Polling\n// This now loops through the saved device list\n\nconst devices = flow.get(\"device_list\") || [];\nif (devices.length === 0) {\n    node.warn(\"Polling: No device list found.\");\n    return null;\n}\n\nfunction buildQuery(msgType, deviceId) {\n    const buffer = Buffer.alloc(7);\n    buffer[0] = 0xE0;\n    buffer[1] = 0x31;\n    buffer.writeUInt16LE(3, 2);\n    buffer[4] = msgType;\n    buffer.writeUInt16LE(deviceId, 5);\n    return { payload: buffer };\n}\n\nfunction buildHeartbeat() {\n    const buffer = Buffer.alloc(7);\n    buffer[0] = 0xE0;\n    buffer[1] = 0x31;\n    buffer.writeUInt16LE(3, 2);\n    buffer[4] = 0x01;\n    buffer[5] = 0xAA;\n    buffer[6] = 0xFF;\n    return { payload: buffer };\n}\n\nlet count = context.get(\"pollCounter\") || 0;\ncount++;\n\nfor (const device of devices) {\n    const devAddr = device.address;\n\n    // --- Every 10 seconds (Runs on every tick) ---\n    node.send(buildQuery(0x0F, devAddr)); // 1. Get Shunt Status (Type 15)\n\n    // --- Every 20 seconds (Runs on tick 2, 4, 6...) ---\n    if (count % 2 === 0) { // <--- CHANGED FROM 3 TO 2\n        node.send(buildQuery(0x03, devAddr)); // 2. Get Comm Status (Type 3)\n        node.send(buildQuery(0x13, devAddr)); // 3. Get Device Summary (Type 19)\n        node.send(buildQuery(0x09, devAddr)); // 4. Get All Controls (Type 9)\n        node.send(buildQuery(0x05, devAddr)); // 5. Get All Diag Alarms (Type 5)\n    }\n}\n\n// Send one heartbeat\nif (count % 2 === 0) { // <--- CHANGED FROM 3 TO 2\n    node.send(buildHeartbeat());\n    node.log(`Polling ${devices.length} device(s)...`);\n}\n\nif (count >= 2) { // <--- CHANGED FROM 3 TO 2\n    count = 0;\n}\ncontext.set(\"pollCounter\", count);\n\nreturn null;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 480,
+        "y": 380,
+        "wires": [
+            [
+                "QUERY_RATE_LIMITER"
+            ]
+        ]
+    },
+    {
+        "id": "a5f8b73b2b4f6446",
+        "type": "function",
+        "z": "0aa374ead5075515",
+        "name": "Decode Diag Alarms (Type 5)",
+        "func": "// [REVISED] Decode Diag Alarms (Type 5)\nconst diagMap = {\n    1: \"EnclosureTamper\", 2: \"ProgramFlashError\", 3: \"RAMError\",\n    4: \"ProcessorBootFail\", 5: \"8VRailFault\", 6: \"3VRailFault\",\n    7: \"1V8RailFault\", 8: \"1V2RailFault\", 9: \"InputPowerFail\",\n    10: \"SideAPowerFault\", 11: \"SideBPowerFault\", 12: \"SideASupervision\",\n    13: \"SideBSupervision\", 14: \"SideAInterference\", 15: \"SideBInterference\",\n    16: \"ProcessorOffline\", 17: \"GsmRcvrFault\", 18: \"GsmRcvrInterference\",\n    19: \"Gsm1_CommFail\", 20: \"Gsm1_EnclosureTamper\", 21: \"Gsm1_ProgramFlashError\",\n    22: \"Gsm1_I2CBusFault\", 23: \"GGsm1_2V7RailFault\", 24: \"Gsm1_LowPower\",\n    43: \"OptionCardFail\"\n};\n\nconst buf = msg.payload;\nconst devAddr = buf.readUInt16LE(5);\nconst point_count = buf.readUInt16LE(7);\n\nlet statusUpdates = []; \n\nfor (let i = 0; i < point_count; i++) {\n    const point = i + 1;\n    const byte_index = 9 + Math.floor(i / 8);\n    const bit_index = i % 8;\n\n    if (byte_index >= buf.length) break;\n\n    const byte = buf[byte_index];\n    const active = (byte >> bit_index) & 0x01;\n\n    const name = diagMap[point] || `DiagPoint_${point}`;\n    \n    statusUpdates.push({\n        name: name,\n        active: active > 0\n    });\n}\n\n// --- UPDATED STATUS ---\nnode.status(`Dev ${devAddr}: ${point_count} diag points processed`);\n// --- END UPDATE ---\n\nmsg.payload = {\n    type: \"DiagAlarmList\",\n    device: devAddr,\n    statuses: statusUpdates\n};\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1920,
+        "y": 900,
+        "wires": [
+            [
+                "c9a8f7b2e1d0c6a5",
+                "6af6fdc49169e051"
+            ]
+        ]
+    },
+    {
+        "id": "ca34f4a2f3fda8ba",
+        "type": "debug",
+        "z": "0aa374ead5075515",
+        "name": "Decode Controls",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 2210,
+        "y": 840,
+        "wires": []
+    },
+    {
+        "id": "6af6fdc49169e051",
+        "type": "debug",
+        "z": "0aa374ead5075515",
+        "name": "DIAG Alarms",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 2190,
+        "y": 900,
+        "wires": []
+    },
+    {
+        "id": "1e2945f22208b103",
+        "type": "function",
+        "z": "0aa374ead5075515",
+        "name": "Decode Control In-Use (Type 25)",
+        "func": "// [function] Decode Control In-Use (Type 25)\n// This decodes which control points are available.\n\nconst buf = msg.payload;\nconst devAddr = buf.readUInt16LE(5);\nconst point_count = buf.readUInt16LE(7);\n\n// This is the same map from your output nodes\nconst outputMap = {\n    1: \"Relay_1\",\n    2: \"Relay_2\",\n    3: \"Relay_3\",\n    4: \"Relay_4\",\n    5: \"OptRelay_1\",\n    6: \"OptRelay_2\",\n    7: \"OptRelay_3\",\n    8: \"OptRelay_4\"\n};\n\nlet in_use_controls = [];\n\n// Loop through each point in the bitmask\nfor (let i = 0; i < point_count; i++) {\n    const point = i + 1;\n    const byte_index = 9 + Math.floor(i / 8);\n    const bit_index = i % 8;\n\n    if (byte_index >= buf.length) break;\n\n    const byte = buf[byte_index];\n    const isInUse = (byte >> bit_index) & 0x01;\n\n    if (isInUse) {\n        const name = outputMap[point] || `Output_${point}`;\n        in_use_controls.push({\n            point: point,\n            name: name\n        });\n    }\n}\n\nnode.status(`${in_use_controls.length} controls in use`);\n\nmsg.payload = {\n    type: \"ControlInUse\",\n    device: devAddr,\n    in_use_controls: in_use_controls\n};\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1940,
+        "y": 960,
+        "wires": [
+            [
+                "0a25606247184f15",
+                "c9a8f7b2e1d0c6a5"
+            ]
+        ]
+    },
+    {
+        "id": "0a25606247184f15",
+        "type": "debug",
+        "z": "0aa374ead5075515",
+        "name": "In Use (25)",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 2190,
+        "y": 960,
+        "wires": []
+    },
+    {
+        "id": "46778c0247998b59",
+        "type": "function",
+        "z": "0aa374ead5075515",
+        "name": "Decode Filter Alarms (Type 17)",
+        "func": "// [REVISED] Decode Filter Alarms (Type 17)\n// This node now adds the device ID to every point object.\n\nconst buf = msg.payload;\nconst devAddr = buf.readUInt16LE(5); // <-- FIX: Read the Device ID\nconst point_count = buf.readUInt16LE(7);\n\nlet all_point_statuses = []; \nlet point = 1;\n\nfor (let byte_index = 9; byte_index < buf.length; byte_index++) {\n    const byte = buf[byte_index];\n\n    for (let i = 0; i < 4; i++) { \n        if (point > point_count) break;\n\n        const state = (byte >> (i * 2)) & 0x03; \n        const is_alarm = (state & 0x01) > 0;\n        const is_tamper = (state & 0x02) > 0;\n\n        let description = `Point ${point}`;\n        let zone_num = null;\n        if (point === 1) {\n            description = \"AuxInput_1\";\n        } else if (point === 2) {\n            description = \"AuxInput_2\";\n        } else if (point >= 3 && point <= 62) {\n            zone_num = point - 2;\n            description = `Zone_${zone_num}`;\n        } else if (point >= 71 && point <= 74) {\n            description = `OptInput_${point - 70}`;\n        }\n\n        let status_string = \"Secure\";\n        if (is_alarm) {\n            status_string = \"Alarm (Hold)\"; \n        } else if (is_tamper) {\n            status_string = \"Tamper/Supervision\";\n        }\n\n        all_point_statuses.push({\n            \"type\": \"SensorAlarm (Filtered)\", \n            \"description\": description,\n            \"device\": devAddr, // <-- FIX: Add the Device ID here\n            \"point_raw\": point,\n            \"zone\": zone_num,\n            \"status_raw\": state,\n            \"status_string\": status_string,\n            \"alarm\": is_alarm,\n            \"tamper\": is_tamper,\n            \"location_count\": 0,\n            \"locations\": [],\n            \"timestamp\": new Date().toISOString()\n        });\n\n        point++; \n    }\n    if (point > point_count) break;\n}\n\nnode.status(`${all_point_statuses.length} points processed for Dev ${devAddr}`);\n\nmsg.payload = {\n    type: \"FilteredAlarmList\",\n    device: devAddr, // Add device to top level for consistency\n    points: all_point_statuses\n};\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1930,
+        "y": 1020,
+        "wires": [
+            [
+                "3f6efaf5ce083e07",
+                "206ffd881fac9311"
+            ]
+        ]
+    },
+    {
+        "id": "3f6efaf5ce083e07",
+        "type": "debug",
+        "z": "0aa374ead5075515",
+        "name": "Decode Filter Alarms (Type 17)",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 2250,
+        "y": 1020,
+        "wires": []
+    },
+    {
+        "id": "2ba4a098e4c797c7",
+        "type": "function",
+        "z": "0aa374ead5075515",
+        "name": "Update Master Zone List",
+        "func": "// [REVISED] Update Master Zone List (for UI-Table)\n// This node re-adds the HTML generation for the ui-table\n// and correctly processes all incoming device statuses.\n\nconst p = msg.payload;\nconst msgType = p.type;\n\nconst colors = {\n    secure: \"#00802b\",\n    alarm: \"#ff4d4d\",\n    prealarm: \"#cccc00\",\n    shunted: \"#77bbff\",\n    tamper: \"orange\",\n    unknown: \"grey\"\n};\n\nconst button_style = \"padding: 4px 10px; border-radius: 4px; color: white; width: 100%; box-sizing: border-box; text-align: center; font-size: 0.9em; cursor: pointer;\";\n\n// This function adds the HTML properties for the ui-table\nfunction updateZone(zone, status, status_text, color) {\n    if (!zone) return;\n    zone.status = status_text;\n    zone._status = status;\n    zone.led = `<font color=\\\"${color}\\\" style=\\\"font-size: 1.5em; line-height: 1;\\\">⬤</font>`;\n\n    // This uses the simple HTML button (no @click)\n    const baseButton = `<div style=\\\"${button_style}`;\n\n    if (status === 'secure') {\n        zone.mask_button = `${baseButton} background-color: ${colors.secure};\\\">Shunt</div>`;\n    } else if (status === 'shunted') {\n        zone.mask_button = `${baseButton} background-color: ${colors.shunted};\\\">Unshunt</div>`;\n    } else if (status === 'alarm') {\n        zone.mask_button = `<div style=\\\"${button_style} background-color: ${colors.alarm}; opacity: 0.7;\\\">In Alarm</div>`;\n    } else if (status === 'prealarm') {\n        zone.mask_button = `<div style=\\\"${button_style} background-color: ${colors.prealarm}; opacity: 0.7;\\\">Pre-Alarm</div>`;\n    } else {\n        zone.mask_button = `<div style=\\\"${button_style} background-color: ${colors.unknown}; opacity: 0.7;\\\">---</div>`;\n    }\n}\n\n// --- ATOMIC LOGIC: Get/Set on every message ---\nlet zones = flow.get(\"zones\") || {}; // GET\n\nif (msgType === \"SensorInUse\") {\n    for (const point of p.in_use_points) {\n        let key = `${p.device}:${point.description}`;\n        if (!zones[key]) {\n            zones[key] = {\n                device: p.device,\n                location: `${p.device}:1:${point.point}`,\n                description: point.description.replace(\"_\", \" \"),\n                _point: point.point,\n                _status: 'unknown'\n            };\n        }\n    }\n} else if (msgType === \"FilteredAlarmList\") {\n    // This is the startup poll for all point statuses\n    for (const point_status of p.points) {\n        let key = `${point_status.device}:${point_status.description}`;\n        if (zones[key]) {\n            if (point_status.alarm) {\n                zones[key]._status = 'alarm';\n                zones[key].status_string = point_status.status_string;\n            } else if (point_status.tamper) {\n                zones[key]._status = 'tamper';\n            } else {\n                if (zones[key]._status !== 'shunted' && zones[key]._status !== 'prealarm') {\n                    zones[key]._status = 'secure';\n                }\n            }\n        }\n    }\n} else if (msgType === \"SensorAlarm (Filtered)\" || msgType === \"SensorAlarm (Raw)\") {\n    // This handles unsolicited (live) updates\n    let key = `${p.device}:${p.description}`;\n    if (!zones[key]) {\n        zones[key] = {\n            device: p.device,\n            location: `${p.device}:1:${p.point_raw}`,\n            description: p.description.replace(\"_\", \" \"),\n            _point: p.point_raw\n        };\n    }\n    if (zones[key]) {\n        if (p.alarm) {\n            zones[key]._status = 'alarm';\n            zones[key].status_string = p.status_string;\n        } else if (p.tamper) {\n            zones[key]._status = 'tamper';\n        } else {\n            if (zones[key]._status !== 'shunted' && zones[key]._status !== 'prealarm') {\n                zones[key]._status = 'secure';\n            }\n        }\n    }\n} else if (msgType === \"SensorPreAlarm\") {\n    // Set any old pre-alarms back to secure\n    for (const z_key in zones) {\n        if (zones[z_key].device === p.device && zones[z_key]._status === \"prealarm\") {\n            zones[z_key]._status = 'secure';\n        }\n    }\n    // Set new pre-alarms\n    for (const point of p.active_pre_alarms) {\n        let key = `${p.device}:${point.description}`;\n        if (zones[key] && zones[key]._status === \"secure\") {\n            zones[key]._status = 'prealarm';\n        }\n    }\n} else if (msgType === \"ShuntStatus\") {\n    // This processes the poll for all shunt statuses\n    for (const point of p.all_points) {\n        let key = `${point.device}:${point.description}`;\n        if (zones[key]) { // Check if zone exists\n            if (point.alarm && zones[key]._status === \"secure\") {\n                zones[key]._status = 'shunted';\n            } else if (!point.alarm && (zones[key]._status === \"shunted\" || zones[key]._status === \"masked\")) {\n                zones[key]._status = 'secure';\n            }\n        }\n    }\n}\n\n// --- NEW: Re-build HTML for ALL zones *after* updating state ---\n// This loops through every known zone and builds its HTML properties\nfor (const key in zones) {\n    const zone = zones[key];\n\n    // Add Device ID to description for display\n    zone.description = `Dev ${zone.device} - ${zone.description.replace(/^Dev \\d+ - /, '')}`;\n\n    switch (zone._status) {\n        case 'secure':\n            updateZone(zone, 'secure', 'Secure', colors.secure);\n            break;\n        case 'alarm':\n            let alarmString = (zone.status_string || 'Alarm').replace('ALARM', '<b>ALARM</b>');\n            updateZone(zone, 'alarm', alarmString, colors.alarm);\n            break;\n        case 'tamper':\n            updateZone(zone, 'tamper', '<b>TAMPER</b>', colors.tamper);\n            break;\n        case 'prealarm':\n            updateZone(zone, 'prealarm', '<font color=yellow>Pre-Alarm</font>', colors.prealarm);\n            break;\n        case 'shunted':\n            updateZone(zone, 'shunted', '<font color=#77bbff>Shunted</font>', colors.shunted);\n            break;\n        default:\n            updateZone(zone, 'unknown', 'Unknown', colors.unknown);\n    }\n}\n\nflow.set(\"zones\", zones); // SET\n\n// Send the full, updated list to the dashboard\nlet zoneArray = Object.values(zones);\nzoneArray.sort((a, b) => {\n    if (a.device < b.device) return -1;\n    if (a.device > b.device) return 1;\n    return a._point - b._point;\n});\n\n// Send the single array to the UI Limiter node\nmsg.payload = zoneArray;\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 270,
+        "y": 760,
+        "wires": [
+            [
+                "af2b0b41da8f1a86"
+            ]
+        ]
+    },
+    {
+        "id": "c9a8f7b2e1d0c6a5",
+        "type": "join",
+        "z": "0aa374ead5075515",
+        "name": "Group All Updates",
+        "mode": "timer",
+        "build": "array",
+        "property": "payload",
+        "propertyType": "msg",
+        "key": "topic",
+        "joiner": "\\n",
+        "joinerType": "str",
+        "useparts": true,
+        "accumulate": false,
+        "timeout": "0.25",
+        "count": "",
+        "reduceRight": false,
+        "reduceExp": "",
+        "reduceInit": "",
+        "reduceInitType": "num",
+        "reduceFixup": "",
+        "x": 2590,
+        "y": 760,
+        "wires": [
+            [
+                "5a0c463f0dc0b25c"
+            ]
+        ]
+    },
+    {
+        "id": "af2b0b41da8f1a86",
+        "type": "delay",
+        "z": "0aa374ead5075515",
+        "name": "UI Zone Limiter",
+        "pauseType": "rate",
+        "timeout": "5",
+        "timeoutUnits": "seconds",
+        "rate": "1",
+        "nbRateUnits": "0.25",
+        "rateUnits": "second",
+        "randomFirst": "1",
+        "randomLast": "5",
+        "randomUnits": "seconds",
+        "drop": true,
+        "allowrate": false,
+        "outputs": 1,
+        "x": 500,
+        "y": 760,
+        "wires": [
+            [
+                "57d1839e6872f485"
+            ]
+        ]
+    },
+    {
+        "id": "55486f6cc9a3b0f6",
+        "type": "delay",
+        "z": "0aa374ead5075515",
+        "name": "UI Diag/Output Limiter (500ms)",
+        "pauseType": "rate",
+        "timeout": "5",
+        "timeoutUnits": "seconds",
+        "rate": "1",
+        "nbRateUnits": "1",
+        "rateUnits": "second",
+        "randomFirst": "1",
+        "randomLast": "5",
+        "randomUnits": "seconds",
+        "drop": true,
+        "allowrate": false,
+        "outputs": 1,
+        "x": 530,
+        "y": 920,
+        "wires": [
+            [
+                "8ebc7c2aea32e08f",
+                "a8ac0a595c37a869"
+            ]
+        ]
+    },
+    {
+        "id": "decode-range-alarms",
+        "type": "function",
+        "z": "0aa374ead5075515",
+        "name": "Decode Range Alarms (Type 26)",
+        "func": "// [REVISED] Decode Range Alarms (Type 26)\nconst buf = msg.payload;\nconst devAddr = buf.readUInt16LE(5);\nconst numRanges = buf.readUInt16LE(7);\n\nlet messages_to_send = [];\n\nif (numRanges === 0 || numRanges === 0xFFFF) {\n    node.warn(`Device ${devAddr} reports no range information.`);\n    return null;\n}\n\nlet offset = 9; // Start of first range structure\n\nfor (let i = 0; i < numRanges; i++) {\n    if (offset + 11 > buf.length) {\n        node.warn(\"Buffer overflow reading range data\");\n        break;\n    }\n\n    const point_num = buf.readUInt16LE(offset);     // Bytes 10-11\n    const range_start = buf.readUInt32LE(offset + 3); // Bytes 13-16\n    const range_end = buf.readUInt32LE(offset + 7);   // Bytes 17-20\n\n    // Use your existing logic: Zone_1 = point 3, Zone_2 = point 4\n    if (point_num >= 3) {\n        const zone_id = \"Zone_\" + (point_num - 2);\n\n        // This query will INSERT a new zone with its device_id,\n        // or UPDATE it if it already exists.\n        const sql_query = `\n            INSERT INTO zones (zone_id, description, device_id, meter_start, meter_end)\n            VALUES ('${zone_id}', '${zone_id}', ${devAddr}, ${range_start}, ${range_end})\n            ON CONFLICT (zone_id) DO UPDATE\n            SET \n                description = EXCLUDED.description,\n                device_id = EXCLUDED.device_id,\n                meter_start = EXCLUDED.meter_start,\n                meter_end = EXCLUDED.meter_end;\n        `;\n\n        messages_to_send.push({\n            query: sql_query,\n            payload: null,\n            topic: `${zone_id} range: ${range_start}-${range_end}`\n        });\n    }\n\n    offset += 11; // Move to the next range structure\n}\n\nif (messages_to_send.length > 0) {\n    node.warn(`Found ${messages_to_send.length} zone ranges to update/insert.`);\n    return [messages_to_send]; // Send all messages\n}\n\nreturn null;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1930,
+        "y": 1080,
+        "wires": [
+            [
+                "update-range-db",
+                "debug-range-query"
+            ]
+        ]
+    },
+    {
+        "id": "update-range-db",
+        "type": "postgresql",
+        "z": "0aa374ead5075515",
+        "name": "Update Zone Ranges",
+        "query": "",
+        "postgreSQLConfig": "112969890e9876a0",
+        "split": false,
+        "rowsPerMsg": 1,
+        "outputs": 1,
+        "x": 2200,
+        "y": 1080,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "debug-range-query",
+        "type": "debug",
+        "z": "0aa374ead5075515",
+        "name": "Range UPDATE Query",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "query",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 2200,
+        "y": 1140,
+        "wires": []
+    },
+    {
+        "id": "dc24e9475cda970c",
+        "type": "link out",
+        "z": "0aa374ead5075515",
+        "name": "link out 33",
+        "mode": "link",
+        "links": [
+            "86cf2055e4edfcbc"
+        ],
+        "x": 2095,
+        "y": 200,
+        "wires": []
+    },
+    {
+        "id": "6e26454e9e904e5e",
+        "type": "ui-table",
+        "z": "0aa374ead5075515",
+        "group": "fd4c8c8f7eef1ee1",
+        "name": "Zone Status Table",
+        "label": "",
+        "order": 1,
+        "width": "0",
+        "height": "0",
+        "maxrows": "",
+        "passthru": true,
+        "autocols": false,
+        "showSearch": false,
+        "deselect": true,
+        "selectionType": "click",
+        "columns": [
+            {
+                "title": "",
+                "key": "led",
+                "keyType": "key",
+                "type": "html",
+                "width": "6%",
+                "align": "start"
+            },
+            {
+                "title": "Description",
+                "key": "description",
+                "keyType": "key",
+                "type": "html",
+                "width": "30%",
+                "align": "start"
+            },
+            {
+                "title": "Status",
+                "key": "status",
+                "keyType": "key",
+                "type": "html",
+                "width": "32%",
+                "align": "start"
+            },
+            {
+                "title": "Action",
+                "key": "mask_button",
+                "keyType": "key",
+                "type": "html",
+                "width": "36%",
+                "align": "start"
+            }
+        ],
+        "mobileBreakpoint": "sm",
+        "mobileBreakpointType": "defaults",
+        "action": "replace",
+        "className": "",
+        "x": 950,
+        "y": 700,
+        "wires": [
+            [
+                "3e908003a176e19a"
+            ]
+        ]
+    },
+    {
+        "id": "1005881de85f1364",
+        "type": "ui-table",
+        "z": "0aa374ead5075515",
+        "group": "fd4c8c8f7eef1ee1",
+        "name": "Output Status Table",
+        "label": "Outputs",
+        "order": 3,
+        "width": "0",
+        "height": "0",
+        "maxrows": "",
+        "passthru": true,
+        "autocols": false,
+        "showSearch": false,
+        "deselect": true,
+        "selectionType": "click",
+        "columns": [
+            {
+                "title": "",
+                "key": "led",
+                "keyType": "key",
+                "type": "html",
+                "width": "10%",
+                "align": "center"
+            },
+            {
+                "title": "Description",
+                "key": "description",
+                "keyType": "key",
+                "type": "html",
+                "width": "40%",
+                "align": "start"
+            },
+            {
+                "title": "Status",
+                "key": "status",
+                "keyType": "key",
+                "type": "html",
+                "width": "30%",
+                "align": "start"
+            },
+            {
+                "title": "Action",
+                "key": "action_button",
+                "keyType": "key",
+                "type": "html",
+                "width": "20%",
+                "align": "center"
+            }
+        ],
+        "mobileBreakpoint": "sm",
+        "mobileBreakpointType": "defaults",
+        "action": "replace",
+        "className": "",
+        "x": 1090,
+        "y": 900,
+        "wires": [
+            [
+                "cc2fda239774dbfd"
+            ]
+        ]
+    },
+    {
+        "id": "4b64a949630d0ba7",
+        "type": "link out",
+        "z": "0aa374ead5075515",
+        "name": "link out 35",
+        "mode": "link",
+        "links": [
+            "9f42a61891c06343"
+        ],
+        "x": 2095,
+        "y": 300,
+        "wires": []
+    },
+    {
+        "id": "9f42a61891c06343",
+        "type": "link in",
+        "z": "0aa374ead5075515",
+        "g": "21fe5cf8cb554508",
+        "name": "link in (Increment Alarm Count)",
+        "links": [
+            "4b64a949630d0ba7"
+        ],
+        "x": 245,
+        "y": 1220,
+        "wires": [
+            [
+                "ce08edefbbbeb6a5"
+            ]
+        ]
+    },
+    {
+        "id": "ce08edefbbbeb6a5",
+        "type": "delay",
+        "z": "0aa374ead5075515",
+        "g": "21fe5cf8cb554508",
+        "name": "Queue File Access",
+        "pauseType": "queue",
+        "timeout": "5",
+        "timeoutUnits": "seconds",
+        "rate": "1",
+        "nbRateUnits": "1",
+        "rateUnits": "second",
+        "randomFirst": "1",
+        "randomLast": "5",
+        "randomUnits": "seconds",
+        "drop": false,
+        "allowrate": false,
+        "outputs": 1,
+        "x": 440,
+        "y": 1220,
+        "wires": [
+            [
+                "919c9de25d474309"
+            ]
+        ]
+    },
+    {
+        "id": "1e0697df4af01765",
+        "type": "file in",
+        "z": "0aa374ead5075515",
+        "g": "21fe5cf8cb554508",
+        "name": "Read Count File",
+        "filename": "alarm_count.json",
+        "filenameType": "str",
+        "format": "utf8",
+        "chunk": false,
+        "sendError": true,
+        "encoding": "none",
+        "allProps": false,
+        "x": 860,
+        "y": 1220,
+        "wires": [
+            [
+                "09fb054ac8b30156"
+            ]
+        ]
+    },
+    {
+        "id": "09fb054ac8b30156",
+        "type": "function",
+        "z": "0aa374ead5075515",
+        "g": "21fe5cf8cb554508",
+        "name": "Parse and Increment",
+        "func": "// [FIXED] Parse and Increment (Alarm)\n\n// Get the increment amount (e.g., 1) from msg.increment\nlet increment = msg.increment || 1;\nlet data = { \"count\": 0 };\n\n// msg.payload now holds the file data (or an error)\nif (msg.error || !msg.payload) {\n    node.warn(\"Alarm count file not found, creating new one.\");\n    data.count = 0;\n} else {\n    try {\n        // Parse the file content from msg.payload\n        data = JSON.parse(msg.payload);\n        if (isNaN(data.count)) {\n            data.count = 0;\n        }\n    } catch (e) {\n        node.warn(\"Alarm count file corrupt, resetting count.\");\n        data.count = 0;\n    }\n}\n\n// Increment the count by the saved amount\ndata.count += increment;\n\n// Set the payload to be the JSON string to write back\nmsg.payload = JSON.stringify(data);\n\n// Store the new *number* in memory\nflow.set(\"alarm_total_count\", data.count);\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1080,
+        "y": 1220,
+        "wires": [
+            [
+                "0ff69e5fbb27109c"
+            ]
+        ]
+    },
+    {
+        "id": "0ff69e5fbb27109c",
+        "type": "file",
+        "z": "0aa374ead5075515",
+        "g": "21fe5cf8cb554508",
+        "name": "Write Count File",
+        "filename": "alarm_count.json",
+        "filenameType": "str",
+        "appendNewline": false,
+        "createDir": true,
+        "overwriteFile": "true",
+        "encoding": "none",
+        "x": 1300,
+        "y": 1220,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "bb57acb36cf9d5ec",
+        "type": "inject",
+        "z": "0aa374ead5075515",
+        "g": "21fe5cf8cb554508",
+        "name": "Poll for Dashboard",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "5",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "2",
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 260,
+        "y": 1360,
+        "wires": [
+            [
+                "041b938ec6948998"
+            ]
+        ]
+    },
+    {
+        "id": "041b938ec6948998",
+        "type": "function",
+        "z": "0aa374ead5075515",
+        "g": "21fe5cf8cb554508",
+        "name": "Get Total Count",
+        "func": "// Get the count that is being saved to the file/memory\nlet count = flow.get(\"alarm_total_count\") || 0;\n\nmsg.payload = count;\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 460,
+        "y": 1360,
+        "wires": [
+            [
+                "68a234f2e1aaf565"
+            ]
+        ]
+    },
+    {
+        "id": "68a234f2e1aaf565",
+        "type": "ui-text",
+        "z": "0aa374ead5075515",
+        "g": "21fe5cf8cb554508",
+        "group": "a19c56aa1de5d2ac",
+        "order": 1,
+        "width": "2",
+        "height": "1",
+        "name": "Total Historical Alarms",
+        "label": "TOTAL  ALARMS",
+        "format": "<div style=\"display:flex; height:100%; width:100%; flex-direction:column; align-items:center; justify-content:center;\">\n    <span style=\"font-size: 3em; font-weight: bold; color: white;\">{{msg.payload}}</span>\n</div>",
+        "layout": "",
+        "style": false,
+        "font": "",
+        "fontSize": "",
+        "color": "#000000",
+        "wrapText": false,
+        "className": "",
+        "value": "payload",
+        "valueType": "msg",
+        "x": 680,
+        "y": 1360,
+        "wires": []
+    },
+    {
+        "id": "9fa61dd67bd358f1",
+        "type": "inject",
+        "z": "0aa374ead5075515",
+        "g": "21fe5cf8cb554508",
+        "name": "Initialize Count on Deploy",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "0.5",
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 290,
+        "y": 1280,
+        "wires": [
+            [
+                "d7077cc4abdd6840"
+            ]
+        ]
+    },
+    {
+        "id": "d7077cc4abdd6840",
+        "type": "file in",
+        "z": "0aa374ead5075515",
+        "g": "21fe5cf8cb554508",
+        "name": "Read Count File",
+        "filename": "alarm_count.json",
+        "filenameType": "str",
+        "format": "utf8",
+        "chunk": false,
+        "sendError": true,
+        "encoding": "none",
+        "allProps": false,
+        "x": 540,
+        "y": 1280,
+        "wires": [
+            [
+                "58fe2edc85151e3f"
+            ]
+        ]
+    },
+    {
+        "id": "58fe2edc85151e3f",
+        "type": "function",
+        "z": "0aa374ead5075515",
+        "g": "21fe5cf8cb554508",
+        "name": "Initialize Count Variable",
+        "func": "let data = { \"count\": 0 };\n\nif (msg.error) {\n    node.warn(\"Initializing alarm count to 0.\");\n    data.count = 0;\n} else {\n    try {\n        data = JSON.parse(msg.payload);\n        if (isNaN(data.count)) {\n            data.count = 0;\n        }\n    } catch(e) {\n        node.warn(\"Alarm count file corrupt, initializing to 0.\");\n        data.count = 0;\n    }\n}\n\n// Set the flow variable on startup\nflow.set(\"alarm_total_count\", data.count);\nnode.status(\"Count initialized to: \" + data.count);\n\nreturn null;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 760,
+        "y": 1280,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "PREALARM_LINK_IN",
+        "type": "link in",
+        "z": "0aa374ead5075515",
+        "g": "21fe5cf8cb554508",
+        "name": "link in (Increment Pre-Alarm Count)",
+        "links": [
+            "8088cf5df53b4360"
+        ],
+        "x": 225,
+        "y": 1460,
+        "wires": [
+            [
+                "PREALARM_QUEUE"
+            ]
+        ]
+    },
+    {
+        "id": "PREALARM_QUEUE",
+        "type": "delay",
+        "z": "0aa374ead5075515",
+        "g": "21fe5cf8cb554508",
+        "name": "Queue File Access",
+        "pauseType": "queue",
+        "timeout": "5",
+        "timeoutUnits": "seconds",
+        "rate": "1",
+        "nbRateUnits": "1",
+        "rateUnits": "second",
+        "randomFirst": "1",
+        "randomLast": "5",
+        "randomUnits": "seconds",
+        "drop": false,
+        "allowrate": false,
+        "outputs": 1,
+        "x": 420,
+        "y": 1460,
+        "wires": [
+            [
+                "0757130c0e7a3ae5"
+            ]
+        ]
+    },
+    {
+        "id": "PREALARM_READ",
+        "type": "file in",
+        "z": "0aa374ead5075515",
+        "g": "21fe5cf8cb554508",
+        "name": "Read Count File",
+        "filename": "pre_alarm_count.json",
+        "filenameType": "str",
+        "format": "utf8",
+        "chunk": false,
+        "sendError": true,
+        "encoding": "none",
+        "allProps": false,
+        "x": 860,
+        "y": 1460,
+        "wires": [
+            [
+                "PREALARM_INCREMENT"
+            ]
+        ]
+    },
+    {
+        "id": "PREALARM_INCREMENT",
+        "type": "function",
+        "z": "0aa374ead5075515",
+        "g": "21fe5cf8cb554508",
+        "name": "Parse and Increment",
+        "func": "// [FIXED] Parse and Increment (Pre-Alarm)\n\n// Get the increment amount (e.g., 1) from msg.increment\nlet increment = msg.increment || 1;\nlet data = { \"count\": 0 };\n\n// msg.payload now holds the file data (or an error)\nif (msg.error || !msg.payload) {\n    node.warn(\"Pre-alarm count file not found, creating new one.\");\n    data.count = 0;\n} else {\n    try {\n        // Parse the file content from msg.payload\n        data = JSON.parse(msg.payload);\n        if (isNaN(data.count)) {\n            data.count = 0;\n        }\n    } catch (e) {\n        node.warn(\"Pre-alarm count file corrupt, resetting count.\");\n        data.count = 0;\n    }\n}\n\n// Increment the count by the saved amount\ndata.count += increment;\n\n// Set the payload to be the JSON string to write back\nmsg.payload = JSON.stringify(data);\n\n// Store the new *number* in memory\nflow.set(\"pre_alarm_total_count\", data.count);\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1080,
+        "y": 1460,
+        "wires": [
+            [
+                "PREALARM_WRITE"
+            ]
+        ]
+    },
+    {
+        "id": "PREALARM_WRITE",
+        "type": "file",
+        "z": "0aa374ead5075515",
+        "g": "21fe5cf8cb554508",
+        "name": "Write Count File",
+        "filename": "pre_alarm_count.json",
+        "filenameType": "str",
+        "appendNewline": false,
+        "createDir": true,
+        "overwriteFile": "true",
+        "encoding": "none",
+        "x": 1300,
+        "y": 1460,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "PREALARM_POLL_INJECT",
+        "type": "inject",
+        "z": "0aa374ead5075515",
+        "g": "21fe5cf8cb554508",
+        "name": "Poll for Dashboard",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "5",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "2.5",
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 240,
+        "y": 1600,
+        "wires": [
+            [
+                "PREALARM_GET_COUNT"
+            ]
+        ]
+    },
+    {
+        "id": "PREALARM_GET_COUNT",
+        "type": "function",
+        "z": "0aa374ead5075515",
+        "g": "21fe5cf8cb554508",
+        "name": "Get Total Count",
+        "func": "// Get the count that is being saved to the file/memory\nlet count = flow.get(\"pre_alarm_total_count\") || 0;\n\nmsg.payload = count;\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 440,
+        "y": 1600,
+        "wires": [
+            [
+                "PREALARM_DASHBOARD"
+            ]
+        ]
+    },
+    {
+        "id": "PREALARM_DASHBOARD",
+        "type": "ui-text",
+        "z": "0aa374ead5075515",
+        "g": "21fe5cf8cb554508",
+        "group": "a19c56aa1de5d2ac",
+        "order": 2,
+        "width": "2",
+        "height": "1",
+        "name": "Total Historical Pre-Alarms",
+        "label": "TOTAL PRE-ALARMS",
+        "format": "<div style=\"display:flex; height:100%; width:100%; flex-direction:column; align-items:center; justify-content:center;\">\n    <span style=\"font-size: 3em; font-weight: bold; color: white;\">{{msg.payload}}</span>\n</div>",
+        "layout": "",
+        "style": false,
+        "font": "",
+        "fontSize": "",
+        "color": "#000000",
+        "wrapText": false,
+        "className": "",
+        "value": "payload",
+        "valueType": "msg",
+        "x": 680,
+        "y": 1600,
+        "wires": []
+    },
+    {
+        "id": "PREALARM_INIT_INJECT",
+        "type": "inject",
+        "z": "0aa374ead5075515",
+        "g": "21fe5cf8cb554508",
+        "name": "Initialize Count on Deploy",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "0.6",
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 270,
+        "y": 1520,
+        "wires": [
+            [
+                "PREALARM_INIT_READ"
+            ]
+        ]
+    },
+    {
+        "id": "PREALARM_INIT_READ",
+        "type": "file in",
+        "z": "0aa374ead5075515",
+        "g": "21fe5cf8cb554508",
+        "name": "Read Count File",
+        "filename": "pre_alarm_count.json",
+        "filenameType": "str",
+        "format": "utf8",
+        "chunk": false,
+        "sendError": true,
+        "encoding": "none",
+        "allProps": false,
+        "x": 520,
+        "y": 1520,
+        "wires": [
+            [
+                "PREALARM_INIT_SET"
+            ]
+        ]
+    },
+    {
+        "id": "PREALARM_INIT_SET",
+        "type": "function",
+        "z": "0aa374ead5075515",
+        "g": "21fe5cf8cb554508",
+        "name": "Initialize Count Variable",
+        "func": "let data = { \"count\": 0 };\n\nif (msg.error) {\n    node.warn(\"Initializing pre-alarm count to 0.\");\n    data.count = 0;\n} else {\n    try {\n        data = JSON.parse(msg.payload);\n        if (isNaN(data.count)) {\n            data.count = 0;\n        }\n    } catch(e) {\n        node.warn(\"Pre-alarm count file corrupt, initializing to 0.\");\n        data.count = 0;\n    }\n}\n\n// Set the flow variable on startup\nflow.set(\"pre_alarm_total_count\", data.count);\nnode.status(\"Pre-alarm count initialized to: \" + data.count);\n\nreturn null;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 740,
+        "y": 1520,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "8088cf5df53b4360",
+        "type": "link out",
+        "z": "0aa374ead5075515",
+        "name": "link out 36",
+        "mode": "link",
+        "links": [
+            "PREALARM_LINK_IN"
+        ],
+        "x": 2095,
+        "y": 380,
+        "wires": []
+    },
+    {
+        "id": "0757130c0e7a3ae5",
+        "type": "change",
+        "z": "0aa374ead5075515",
+        "g": "21fe5cf8cb554508",
+        "name": "",
+        "rules": [
+            {
+                "t": "set",
+                "p": "increment",
+                "pt": "msg",
+                "to": "payload",
+                "tot": "msg"
+            }
+        ],
+        "action": "",
+        "property": "",
+        "from": "",
+        "to": "",
+        "reg": false,
+        "x": 650,
+        "y": 1460,
+        "wires": [
+            [
+                "PREALARM_READ"
+            ]
+        ]
+    },
+    {
+        "id": "919c9de25d474309",
+        "type": "change",
+        "z": "0aa374ead5075515",
+        "g": "21fe5cf8cb554508",
+        "name": "",
+        "rules": [
+            {
+                "t": "set",
+                "p": "increment",
+                "pt": "msg",
+                "to": "payload",
+                "tot": "msg"
+            }
+        ],
+        "action": "",
+        "property": "",
+        "from": "",
+        "to": "",
+        "reg": false,
+        "x": 670,
+        "y": 1220,
+        "wires": [
+            [
+                "1e0697df4af01765"
+            ]
+        ]
+    },
+    {
+        "id": "RESET_BUTTON",
+        "type": "ui-button",
+        "z": "0aa374ead5075515",
+        "g": "21fe5cf8cb554508",
+        "group": "a19c56aa1de5d2ac",
+        "name": "Reset Counts Button",
+        "label": "RESET",
+        "order": 3,
+        "width": "1",
+        "height": "1",
+        "emulateClick": false,
+        "tooltip": "Click to reset the Alarm and Pre-Alarm historical counts to 0.",
+        "color": "",
+        "bgcolor": "#630000",
+        "className": "",
+        "icon": "delete",
+        "iconPosition": "left",
+        "payload": "reset",
+        "payloadType": "str",
+        "topic": "reset",
+        "topicType": "str",
+        "buttonColor": "red",
+        "textColor": "",
+        "iconColor": "white",
+        "enableClick": true,
+        "enablePointerdown": false,
+        "pointerdownPayload": "",
+        "pointerdownPayloadType": "str",
+        "enablePointerup": false,
+        "pointerupPayload": "",
+        "pointerupPayloadType": "str",
+        "x": 300,
+        "y": 1680,
+        "wires": [
+            [
+                "RESET_FUNCTION"
+            ]
+        ]
+    },
+    {
+        "id": "RESET_FUNCTION",
+        "type": "function",
+        "z": "0aa374ead5075515",
+        "g": "21fe5cf8cb554508",
+        "name": "Clear Counts (File & Memory)",
+        "func": "// 1. Reset flow variables in memory\nflow.set(\"alarm_total_count\", 0);\nflow.set(\"pre_alarm_total_count\", 0);\n\n// 2. Create the payload for the files\nconst file_payload = '{\"count\":0}';\n\n// 3. Create the payload for the notification\nconst notification_payload = {\n    title: \"Success\",\n    message: \"Historical counts have been reset to 0.\"\n};\n\n// Output 1: for alarm_count.json\n// Output 2: for pre_alarm_count.json\n// Output 3: for the UI notification\nreturn [\n    { payload: file_payload },\n    { payload: file_payload },\n    { payload: notification_payload }\n];",
+        "outputs": 3,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 570,
+        "y": 1680,
+        "wires": [
+            [
+                "RESET_FILE_ALARM"
+            ],
+            [
+                "RESET_FILE_PREALARM"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "RESET_FILE_ALARM",
+        "type": "file",
+        "z": "0aa374ead5075515",
+        "g": "21fe5cf8cb554508",
+        "name": "Write alarm_count.json",
+        "filename": "alarm_count.json",
+        "filenameType": "str",
+        "appendNewline": false,
+        "createDir": true,
+        "overwriteFile": "true",
+        "encoding": "none",
+        "x": 840,
+        "y": 1640,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "RESET_FILE_PREALARM",
+        "type": "file",
+        "z": "0aa374ead5075515",
+        "g": "21fe5cf8cb554508",
+        "name": "Write pre_alarm_count.json",
+        "filename": "pre_alarm_count.json",
+        "filenameType": "str",
+        "appendNewline": false,
+        "createDir": true,
+        "overwriteFile": "true",
+        "encoding": "none",
+        "x": 850,
+        "y": 1680,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "b1c2d3e4f5a6",
+        "type": "change",
+        "z": "0aa374ead5075515",
+        "name": "Save Diag Filter State",
+        "rules": [
+            {
+                "t": "set",
+                "p": "diag_show_only_active",
+                "pt": "flow",
+                "to": "payload",
+                "tot": "msg"
+            }
+        ],
+        "action": "",
+        "property": "",
+        "from": "",
+        "to": "",
+        "reg": false,
+        "x": 560,
+        "y": 980,
+        "wires": [
+            [
+                "a8ac0a595c37a869"
+            ]
+        ]
+    },
+    {
+        "id": "SWITCH_INPUT_TABLE",
+        "type": "switch",
+        "z": "0aa374ead5075515",
+        "name": "Input Table Click?",
+        "property": "col",
+        "propertyType": "msg",
+        "rules": [
+            {
+                "t": "eq",
+                "v": "mask_button",
+                "vt": "str"
+            }
+        ],
+        "checkall": "true",
+        "repair": false,
+        "outputs": 1,
+        "x": 1150,
+        "y": 780,
+        "wires": [
+            [
+                "3e908003a176e19a"
+            ]
+        ]
+    },
+    {
+        "id": "QUERY_RATE_LIMITER",
+        "type": "delay",
+        "z": "0aa374ead5075515",
+        "name": "Query Rate Limiter (250ms)",
+        "pauseType": "rate",
+        "timeout": "5",
+        "timeoutUnits": "seconds",
+        "rate": "1",
+        "nbRateUnits": "0.3",
+        "rateUnits": "second",
+        "randomFirst": "1",
+        "randomLast": "5",
+        "randomUnits": "seconds",
+        "drop": false,
+        "allowrate": false,
+        "outputs": 1,
+        "x": 800,
+        "y": 340,
+        "wires": [
+            [
+                "144687bed21f2ba3"
+            ]
+        ]
+    },
+    {
+        "id": "befada249b3a0858",
+        "type": "link in",
+        "z": "0aa374ead5075515",
+        "name": "link in 18",
+        "links": [
+            "c76c91906e6b2db7"
+        ],
+        "x": 565,
+        "y": 500,
+        "wires": [
+            [
+                "QUERY_RATE_LIMITER"
+            ]
+        ]
+    },
+    {
+        "id": "c76c91906e6b2db7",
+        "type": "link out",
+        "z": "0aa374ead5075515",
+        "name": "link out 37",
+        "mode": "link",
+        "links": [
+            "befada249b3a0858"
+        ],
+        "x": 2575,
+        "y": 460,
+        "wires": []
+    },
+    {
+        "id": "5a0c463f0dc0b25c",
+        "type": "link out",
+        "z": "0aa374ead5075515",
+        "name": "link out 38",
+        "mode": "link",
+        "links": [
+            "437ab478e6d7e304"
+        ],
+        "x": 2715,
+        "y": 760,
+        "wires": []
+    },
+    {
+        "id": "437ab478e6d7e304",
+        "type": "link in",
+        "z": "0aa374ead5075515",
+        "name": "link in 19",
+        "links": [
+            "5a0c463f0dc0b25c"
+        ],
+        "x": 105,
+        "y": 920,
+        "wires": [
+            [
+                "101e802b63c44163"
+            ]
+        ]
+    },
+    {
+        "id": "debounce_device_list",
+        "type": "trigger",
+        "z": "0aa374ead5075515",
+        "name": "Debounce Device List (1s)",
+        "op1": "",
+        "op2": "0",
+        "op1type": "pay",
+        "op2type": "str",
+        "duration": "1",
+        "extend": true,
+        "overrideDelay": false,
+        "units": "s",
+        "reset": "",
+        "bytopic": "all",
+        "topic": "topic",
+        "outputs": 1,
+        "x": 2200,
+        "y": 480,
+        "wires": [
+            [
+                "b04f586cfc8ddacd"
+            ]
+        ]
+    },
+    {
+        "id": "b04f586cfc8ddacd",
+        "type": "function",
+        "z": "0aa374ead5075515",
+        "name": "Query All Devices",
+        "func": "// [REVISED] Query All Devices\n// This node \"drip-feeds\" queries using setTimeout.\n\nconst devices = msg.payload;\nif (!devices || devices.length === 0) {\n    node.warn(\"No devices found, stopping startup queries.\");\n    return null;\n}\n\nnode.status(`Querying ${devices.length} device(s)...`);\n\nfunction buildQuery(msgType, deviceId) {\n    const buffer = Buffer.alloc(7);\n    buffer[0] = 0xE0;\n    buffer[1] = 0x31;\n    buffer.writeUInt16LE(3, 2); // Data Length\n    buffer[4] = msgType;\n    buffer.writeUInt16LE(deviceId, 5);\n    return { payload: buffer };\n}\n\nlet delay = 0;\n// Stagger queries by 300ms each (MUST be >= rate limiter)\nconst queryDelay = 300;\n\nfor (const device of devices) {\n    const devAddr = device.address;\n\n    // Send all queries for this device, staggered by the delay\n    setTimeout(() => { node.send(buildQuery(0x03, devAddr)); }, delay); // Comm Status\n    delay += queryDelay;\n    setTimeout(() => { node.send(buildQuery(0x16, devAddr)); }, delay); // In-Use Sensors\n    delay += queryDelay;\n    setTimeout(() => { node.send(buildQuery(0x11, devAddr)); }, delay); // Filtered Alarms\n    delay += queryDelay;\n    setTimeout(() => { node.send(buildQuery(0x13, devAddr)); }, delay); // Device Summary\n    delay += queryDelay;\n    setTimeout(() => { node.send(buildQuery(0x19, devAddr)); }, delay); // In-Use Controls\n    delay += queryDelay;\n    setTimeout(() => { node.send(buildQuery(0x0F, devAddr)); }, delay); // Shunt Status\n    delay += queryDelay;\n    setTimeout(() => { node.send(buildQuery(0x09, devAddr)); }, delay); // Control Status\n    delay += queryDelay;\n    setTimeout(() => { node.send(buildQuery(0x05, devAddr)); }, delay); // Diag Alarms\n    delay += queryDelay;\n    setTimeout(() => { node.send(buildQuery(0x1A, devAddr)); }, delay); // Linear Ranges\n    delay += queryDelay;\n}\n\n// This node sends messages via setTimeout, so it returns null here.\nreturn null;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 2430,
+        "y": 480,
+        "wires": [
+            [
+                "c76c91906e6b2db7",
+                "a3a5b1cd9f3779d6"
+            ]
+        ]
+    },
+    {
+        "id": "a1b2c3d4e5f6",
+        "type": "ui-switch",
+        "z": "0aa374ead5075515",
+        "name": "Show Only Active",
+        "label": "Show Active Only",
+        "group": "23adae81c9ee17d6",
+        "order": 1,
+        "width": 6,
+        "height": 1,
+        "passthru": true,
+        "decouple": false,
+        "topic": "payload",
+        "topicType": "msg",
+        "style": "",
+        "className": "",
+        "layout": "row-left",
+        "clickableArea": "switch",
+        "onvalue": "true",
+        "onvalueType": "bool",
+        "onicon": "",
+        "oncolor": "",
+        "offvalue": "false",
+        "offvalueType": "bool",
+        "officon": "",
+        "offcolor": "",
+        "x": 290,
+        "y": 980,
+        "wires": [
+            [
+                "b1c2d3e4f5a6"
+            ]
+        ]
+    },
+    {
+        "id": "23adae81c9ee17d6",
+        "type": "ui-group",
+        "name": "Diagnostic Status",
+        "page": "65786ca93452fbf2",
+        "width": 6,
+        "height": 1,
+        "order": 5,
+        "showTitle": true,
+        "className": "",
+        "visible": "true",
+        "disabled": "false",
+        "groupType": "default"
+    },
+    {
+        "id": "b42441311b59a431",
+        "type": "ui-group",
+        "name": "Inputs",
+        "page": "65786ca93452fbf2",
+        "width": 6,
+        "height": "9",
+        "order": 4,
+        "showTitle": true,
+        "className": "left-align-table-label",
+        "visible": "true",
+        "disabled": "false",
+        "groupType": "default"
+    },
+    {
+        "id": "f74f07dc6ececdfd",
+        "type": "ui-group",
+        "name": "Zone Status",
+        "page": "65786ca93452fbf2",
+        "width": "12",
+        "height": 1,
+        "order": 2,
+        "showTitle": true,
+        "className": "",
+        "visible": "true",
+        "disabled": "false",
+        "groupType": "default"
+    },
+    {
+        "id": "1070cd7c96b6af5e",
+        "type": "ui-group",
+        "name": "Outputs",
+        "page": "65786ca93452fbf2",
+        "width": 6,
+        "height": "5",
+        "order": 3,
+        "showTitle": true,
+        "className": "",
+        "visible": "true",
+        "disabled": "false",
+        "groupType": "default"
+    },
+    {
+        "id": "112969890e9876a0",
+        "type": "postgreSQLConfig",
+        "name": "PostgreSQL-dFuse",
+        "host": "DB_HOST",
+        "hostFieldType": "env",
+        "port": 5432,
+        "portFieldType": "num",
+        "database": "dfuse",
+        "databaseFieldType": "str",
+        "ssl": "false",
+        "sslFieldType": "bool",
+        "applicationName": "nodered1",
+        "applicationNameType": "str",
+        "max": 10,
+        "maxFieldType": "num",
+        "idle": 1000,
+        "idleFieldType": "num",
+        "connectionTimeout": 10000,
+        "connectionTimeoutFieldType": "num",
+        "user": "DB_USER",
+        "userFieldType": "env",
+        "password": "DB_PASSWORD",
+        "passwordFieldType": "env"
+    },
+    {
+        "id": "fd4c8c8f7eef1ee1",
+        "type": "ui-group",
+        "name": "Zones",
+        "page": "f94a66ea36e93037",
+        "width": "5",
+        "height": "11",
+        "order": 2,
+        "showTitle": true,
+        "className": "",
+        "visible": "true",
+        "disabled": "false",
+        "groupType": "default"
+    },
+    {
+        "id": "a19c56aa1de5d2ac",
+        "type": "ui-group",
+        "name": "Statistics",
+        "page": "65786ca93452fbf2",
+        "width": "12",
+        "height": "1",
+        "order": 1,
+        "showTitle": true,
+        "className": "",
+        "visible": "true",
+        "disabled": "false",
+        "groupType": "default"
+    },
+    {
+        "id": "65786ca93452fbf2",
+        "type": "ui-page",
+        "name": "NM",
+        "ui": "d1e2f3a4.b5c6d7",
+        "path": "/NM",
+        "icon": "link",
+        "layout": "grid",
+        "theme": "b63a46ca0c7f9605",
+        "breakpoints": [
+            {
+                "name": "Default",
+                "px": "0",
+                "cols": "3"
+            },
+            {
+                "name": "Tablet",
+                "px": "576",
+                "cols": "6"
+            },
+            {
+                "name": "Small Desktop",
+                "px": "768",
+                "cols": "9"
+            },
+            {
+                "name": "Desktop",
+                "px": "1024",
+                "cols": "12"
+            }
+        ],
+        "order": 4,
+        "className": "",
+        "visible": true,
+        "disabled": false
+    },
+    {
+        "id": "f94a66ea36e93037",
+        "type": "ui-page",
+        "name": "Live Map",
+        "ui": "d1e2f3a4.b5c6d7",
+        "path": "/LiveMap",
+        "icon": "map",
+        "layout": "grid",
+        "theme": "t1u2v3w4.x5y6z7",
+        "breakpoints": [
+            {
+                "name": "Default",
+                "px": "0",
+                "cols": "3"
+            },
+            {
+                "name": "Tablet",
+                "px": "576",
+                "cols": "6"
+            },
+            {
+                "name": "Small Desktop",
+                "px": "768",
+                "cols": "9"
+            },
+            {
+                "name": "Desktop",
+                "px": "1024",
+                "cols": "12"
+            }
+        ],
+        "order": 6,
+        "className": "",
+        "visible": true,
+        "disabled": false
+    },
+    {
+        "id": "d1e2f3a4.b5c6d7",
+        "type": "ui-base",
+        "name": "Configuration",
+        "path": "/dashboard",
+        "appIcon": "",
+        "includeClientData": true,
+        "acceptsClientConfig": [
+            "ui-control",
+            "ui-notification",
+            "ui-iframe"
+        ],
+        "showPathInSidebar": false,
+        "headerContent": "dashpage",
+        "navigationStyle": "icon",
+        "titleBarStyle": "hidden",
+        "showReconnectNotification": true,
+        "notificationDisplayTime": 5,
+        "showDisconnectNotification": true,
+        "allowInstall": true
+    },
+    {
+        "id": "b63a46ca0c7f9605",
+        "type": "ui-theme",
+        "name": "Default Theme",
+        "colors": {
+            "surface": "#000000",
+            "primary": "#2a86fe",
+            "bgPage": "#050505",
+            "groupBg": "#1f1e1e",
+            "groupOutline": "#585656"
+        },
+        "sizes": {
+            "density": "default",
+            "pagePadding": "12px",
+            "groupGap": "12px",
+            "groupBorderRadius": "4px",
+            "widgetGap": "12px"
+        }
+    },
+    {
+        "id": "t1u2v3w4.x5y6z7",
+        "type": "ui-theme",
+        "name": "Theme Name",
+        "colors": {
+            "surface": "#030303",
+            "primary": "#3d71d9",
+            "bgPage": "#0f0f0f",
+            "groupBg": "#1a1919",
+            "groupOutline": "#343232"
+        },
+        "sizes": {
+            "density": "default",
+            "pagePadding": "24x",
+            "groupGap": "24px",
+            "groupBorderRadius": "6px",
+            "widgetGap": "12px"
+        }
+    },
+    {
+        "id": "0b11f7c03039359f",
+        "type": "global-config",
+        "env": [],
+        "modules": {
+            "@flowfuse/node-red-dashboard": "1.29.0",
+            "node-red-contrib-postgresql": "0.15.4"
+        }
+    }
+]
